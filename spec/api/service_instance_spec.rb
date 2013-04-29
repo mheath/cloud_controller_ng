@@ -126,6 +126,24 @@ module VCAP::CloudController
             :delete => :allowed
         end
 
+        describe "private plan" do
+          let(:space) { Models::Space.make }
+          let(:member_a) { make_developer_for_space(space)}
+          let!(:private_plan) { Models::ServicePlan.make(public: false) }
+          let(:payload) { Yajl::Encoder.encode(
+            'space_guid' => space.guid,
+            'name' => Sham.name,
+            'service_plan_guid' => private_plan.guid,
+          )}
+
+          it "cannot create a service instance" do
+            post('v2/service_instances', payload, headers_for(member_a))
+            debugger
+            get('v2/service_instances','', headers_for(member_a))
+            last_response.status.should == 400
+          end
+        end
+
         describe "SpaceAuditor" do
           let(:member_a) { @space_a_auditor }
           let(:member_b) { @space_b_auditor }
