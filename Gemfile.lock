@@ -27,8 +27,15 @@ GIT
       yajl-ruby
 
 GIT
-  remote: https://github.com/cloudfoundry/vcap-common.git
-  revision: b6e174330efb45b80902807d3b9d888ad8c75973
+  remote: https://github.com/cloudfoundry/vcap-concurrency.git
+  revision: 2a5b0179642cb3d3e7f912a6453ec5731979d115
+  ref: 2a5b0179
+  specs:
+    vcap-concurrency (0.1.0)
+
+GIT
+  remote: https://github.com/youngm/vcap-common.git
+  revision: d8c81d928a4d00a12d2501903a54b6e49ac56f87
   specs:
     vcap_common (2.2.1)
       addressable (~> 2.2)
@@ -45,13 +52,6 @@ GIT
       thin
       vmstat (~> 2.0)
       yajl-ruby
-
-GIT
-  remote: https://github.com/cloudfoundry/vcap-concurrency.git
-  revision: 2a5b0179642cb3d3e7f912a6453ec5731979d115
-  ref: 2a5b0179
-  specs:
-    vcap-concurrency (0.1.0)
 
 GEM
   remote: https://rubygems.org/
