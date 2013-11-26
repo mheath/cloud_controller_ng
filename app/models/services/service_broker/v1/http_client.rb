@@ -60,16 +60,10 @@ module VCAP::CloudController
 
         logger.debug "Sending #{req_class} to #{uri.request_uri}, BODY: #{request.body.inspect}, HEADERS: #{request.to_hash.inspect}"
 
-<<<<<<< HEAD
         use_ssl = uri.scheme.downcase == 'https'
         response = Net::HTTP.start(uri.hostname, uri.port, :use_ssl=> use_ssl) do |http|
-          http.open_timeout = TIMEOUT
-          http.read_timeout = TIMEOUT
-=======
-        response = Net::HTTP.start(uri.hostname, uri.port) do |http|
           http.open_timeout = broker_client_timeout
           http.read_timeout = broker_client_timeout
->>>>>>> master
 
           http.request(request)
         end
