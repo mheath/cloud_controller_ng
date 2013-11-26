@@ -1,3 +1,4 @@
+# encoding: utf-8
 require "spec_helper"
 
 module VCAP::CloudController
@@ -14,11 +15,21 @@ module VCAP::CloudController
 
     let(:route) { Route.make(:domain => domain, :space => space) }
 
+    def enable_custom_buildpacks
+      App.stub(:custom_buildpacks_enabled?) { true }
+    end
+
+    def disable_custom_buildpacks
+      App.stub(:custom_buildpacks_enabled?) { false }
+    end
+
     before do
       # TODO: Remove this double after broker api calls are made asynchronous
       client = double('broker client', unbind: nil, deprovision: nil)
       Service.any_instance.stub(:client).and_return(client)
       VCAP::CloudController::Seeds.create_seed_stacks(config)
+
+      enable_custom_buildpacks
     end
 
     it_behaves_like "a CloudController model", {
@@ -373,6 +384,27 @@ module VCAP::CloudController
         app.refresh
         app.metadata.should eq("command" => "foobar")
       end
+
+      it "saves the field as nil when initializing to empty string" do
+        app = AppFactory.make(:command => "")
+        app.metadata.should eq("command" => nil)
+      end
+
+      it "saves the field as nil when overriding to empty string" do
+        app = AppFactory.make(:command => "echo hi")
+        app.command = ""
+        app.save
+        app.refresh
+        expect(app.metadata).to eq("command" => nil)
+      end
+
+      it "saves the field as nil when set to nil" do
+        app = AppFactory.make(:command => "echo hi")
+        app.command = nil
+        app.save
+        app.refresh
+        expect(app.metadata).to eq("command" => nil)
+      end
     end
 
     describe "console" do
@@ -459,38 +491,93 @@ module VCAP::CloudController
           }.to_not raise_error
         end
 
-        it "does allow a public git url" do
-          expect {
-            AppFactory.make(buildpack: "git://user@github.com:repo")
-          }.to_not raise_error
+        context "when custom buildpacks are enabled" do
+          it "does allow a public git url" do
+            expect {
+              AppFactory.make(buildpack: "git://user@github.com:repo")
+            }.to_not raise_error
+          end
+
+          it "allows a public http url" do
+            expect {
+              AppFactory.make(buildpack: "http://example.com/foo")
+            }.to_not raise_error
+          end
+
+          it "does allow a buildpack name" do
+            admin_buildpack = VCAP::CloudController::Buildpack.make
+            app = nil
+            expect {
+              app = AppFactory.make(buildpack: admin_buildpack.name)
+            }.to_not raise_error
+
+            expect(app.admin_buildpack).to eql(admin_buildpack)
+          end
+
+          it "does not allow a private git url" do
+            expect {
+              app = AppFactory.make(buildpack: "git@example.com:foo.git")
+            }.to raise_error(Sequel::ValidationFailed, /is not valid public git url or a known buildpack name/)
+          end
+
+          it "does not allow a private git url with ssh schema" do
+            expect {
+              app = AppFactory.make(buildpack: "ssh://git@example.com:foo.git")
+            }.to raise_error(Sequel::ValidationFailed, /is not valid public git url or a known buildpack name/)
+          end
         end
 
-        it "allows a public http url" do
-          expect {
-            AppFactory.make(buildpack: "http://example.com/foo")
-          }.to_not raise_error
-        end
+        context "when custom buildpacks are disabled" do
+          context "and the buildpack attribute is being changed" do
+            before { disable_custom_buildpacks }
 
-        it "does allow a buildpack name" do
-          admin_buildpack = VCAP::CloudController::Buildpack.make
-          app = nil
-          expect {
-            app = AppFactory.make(buildpack: admin_buildpack.name)
-          }.to_not raise_error
+            it "does NOT allow a public git url" do
+              expect {
+                AppFactory.make(buildpack: "git://user@github.com:repo")
+              }.to raise_error(Sequel::ValidationFailed, /custom buildpacks are disabled/)
+            end
 
-          expect(app.admin_buildpack).to eql(admin_buildpack)
-        end
+            it "does NOT allow a public http url" do
+              expect {
+                AppFactory.make(buildpack: "http://example.com/foo")
+              }.to raise_error(Sequel::ValidationFailed, /custom buildpacks are disabled/)
+            end
 
-        it "does not allow a private git url" do
-          expect {
-            app = AppFactory.make(buildpack: "git@example.com:foo.git")
-          }.to raise_error(Sequel::ValidationFailed, /is not valid public git url or a known buildpack name/)
-        end
+            it "does allow a buildpack name" do
+              admin_buildpack = VCAP::CloudController::Buildpack.make
+              app = nil
+              expect {
+                app = AppFactory.make(buildpack: admin_buildpack.name)
+              }.to_not raise_error
 
-        it "does not allow a private git url with ssh schema" do
-          expect {
-            app = AppFactory.make(buildpack: "ssh://git@example.com:foo.git")
-          }.to raise_error(Sequel::ValidationFailed, /is not valid public git url or a known buildpack name/)
+              expect(app.admin_buildpack).to eql(admin_buildpack)
+            end
+
+            it "does not allow a private git url" do
+              expect {
+                app = AppFactory.make(buildpack: "git@example.com:foo.git")
+              }.to raise_error(Sequel::ValidationFailed, /custom buildpacks are disabled/)
+            end
+
+            it "does not allow a private git url with ssh schema" do
+              expect {
+                app = AppFactory.make(buildpack: "ssh://git@example.com:foo.git")
+              }.to raise_error(Sequel::ValidationFailed, /custom buildpacks are disabled/)
+            end
+          end
+
+          context "and an attribute OTHER THAN buildpack is being changed" do
+            it "permits the change even though the buildpack is still custom" do
+              app = AppFactory.make(buildpack: "git://user@github.com:repo")
+
+              disable_custom_buildpacks
+
+              expect {
+                app.instances = 2
+                app.save
+              }.to_not raise_error
+            end
+          end
         end
 
         it "does not allow a non-url string" do
@@ -502,6 +589,7 @@ module VCAP::CloudController
 
       describe "name" do
         let(:space) { Space.make }
+        let(:app) { AppFactory.make }
 
         it "does not allow the same name in a different case", :skip_sqlite => true do
           AppFactory.make(:name => "lowercase", :space => space)
@@ -509,6 +597,41 @@ module VCAP::CloudController
           expect {
             AppFactory.make(:name => "lowerCase", :space => space)
           }.to raise_error(Sequel::ValidationFailed, /space_id and name/)
+        end
+
+        it "should allow standard ascii characters" do
+          app.name = "A -_- word 2!?()\'\"&+."
+          expect{
+            app.save
+          }.to_not raise_error
+        end
+
+        it "should allow backslash characters" do
+          app.name = "a \\ word"
+          expect{
+            app.save
+          }.to_not raise_error
+        end
+
+        it "should allow unicode characters" do
+          app.name = "防御力¡"
+          expect{
+            app.save
+          }.to_not raise_error
+        end
+
+        it "should not allow newline characters" do
+          app.name = "a \n word"
+          expect{
+            app.save
+          }.to raise_error(Sequel::ValidationFailed)
+        end
+
+        it "should not allow escape characters" do
+          app.name = "a \e word"
+          expect{
+            app.save
+          }.to raise_error(Sequel::ValidationFailed)
         end
       end
 
@@ -1063,39 +1186,93 @@ module VCAP::CloudController
       end
 
       context "app update" do
+        let(:org) { Organization.make(:quota_definition => quota) }
+        let(:space) { Space.make(:organization => org) }
+        let!(:app) { AppFactory.make(:space => space, :memory => 64, :instances => 2) }
+
         it "should raise error when quota is exceeded" do
-          org = Organization.make(:quota_definition => quota)
-          space = Space.make(:organization => org)
-          app = AppFactory.make(:space => space,
-            :memory => 64,
-            :instances => 2)
           app.memory = 65
           expect { app.save }.to raise_error(Sequel::ValidationFailed,
             /memory quota_exceeded/)
         end
 
         it "should not raise error when quota is not exceeded" do
-          org = Organization.make(:quota_definition => quota)
-          space = Space.make(:organization => org)
-          app = AppFactory.make(:space => space,
-            :memory => 63,
-            :instances => 2)
-          app.memory = 64
+          app.memory = 63
           expect { app.save }.to_not raise_error
         end
 
         it "can delete an app that somehow has exceeded its memory quota" do
-          org = Organization.make(:quota_definition => quota)
-          space = Space.make(:organization => org)
-          app = AppFactory.make(:space => space,
-            :memory => 64,
-            :instances => 2)
-
           quota.memory_limit = 32
           quota.save
           app.memory = 100
           expect { app.save }.to raise_error(Sequel::ValidationFailed, /quota_exceeded/)
           expect { app.delete }.not_to raise_error
+        end
+
+        it "allows scaling down instances of an app from above quota to below quota" do
+          org.quota_definition = QuotaDefinition.make(:memory_limit => 72)
+          act_as_cf_admin {org.save}
+
+          app.reload
+          app.instances = 1
+
+          app.save
+
+          app.reload
+          expect(app.instances).to eq(1)
+        end
+
+        it "raises when scaling down number of instances but remaining above quota" do
+          org.quota_definition = QuotaDefinition.make(:memory_limit => 32)
+          act_as_cf_admin {org.save}
+
+          app.reload
+          app.instances = 1
+
+          expect { app.save }.to raise_error(Sequel::ValidationFailed, /quota_exceeded/)
+          app.reload
+          expect(app.instances).to eq(2)
+        end
+
+        it "allows stopping an app that is above quota" do
+          app.update(:state => "STARTED",
+            :package_hash => "abc",
+            :package_state => "STAGED",
+            :droplet_hash => "def")
+
+          org.quota_definition = QuotaDefinition.make(:memory_limit => 72)
+          act_as_cf_admin {org.save}
+
+          app.reload
+          app.state = "STOPPED"
+
+          app.save
+
+          app.reload
+          expect(app).to be_stopped
+        end
+
+        it "allows reducing memory from above quota to at/below quota" do
+          org.quota_definition = QuotaDefinition.make(:memory_limit => 64)
+          act_as_cf_admin {org.save}
+
+          app.memory = 40
+          expect { app.save }.to raise_error(Sequel::ValidationFailed, /quota_exceeded/)
+
+          app.memory = 32
+          app.save
+          expect(app.memory).to eq(32)
+        end
+
+        it "should raise an error if instances is less than zero" do
+          org = Organization.make(:quota_definition => quota)
+          space = Space.make(:organization => org)
+          app = AppFactory.make(:space => space,
+                                :memory => 64,
+                                :instances => 1)
+
+          app.instances = -1
+          expect { app.save }.to raise_error(Sequel::ValidationFailed, /instances less_than_zero/)
         end
       end
     end
@@ -1195,6 +1372,24 @@ module VCAP::CloudController
             end.to raise_error
           end
         end
+      end
+    end
+
+    describe ".configure" do
+      # TODO: this is affecting global state and may pollute other tests.
+      #
+      # don't know a good way to test this otherwise.
+      before do
+        described_class.unstub(:custom_buildpacks_enabled?)
+        described_class.configure(false)
+      end
+
+      it "sets whether custom buildpacks are enabled" do
+        expect {
+          described_class.configure(true)
+        }.to change {
+          described_class.custom_buildpacks_enabled?
+        }.from(false).to(true)
       end
     end
   end

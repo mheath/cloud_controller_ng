@@ -21,25 +21,12 @@ module VCAP::CloudController
         :attributes => request_attrs
 
       raise InvalidRequest unless request_attrs
+      raise VCAP::Errors::UnbindableService unless service_bindable?
 
       binding = ServiceBinding.new(@request_attrs)
       validate_access(:create, binding, user, roles)
 
-      client = binding.client
-      client.bind(binding)
-
-      begin
-        binding.save
-      rescue => e
-        begin
-          # this needs to go into a retry queue
-          client.unbind(binding)
-        rescue => unbind_e
-          logger.error "Unable to unbind #{binding}: #{unbind_e}"
-        end
-
-        raise e
-      end
+      binding.bind!
 
       [ HTTP::CREATED,
         { "Location" => "#{self.class.path}/#{binding.guid}" },
@@ -56,5 +43,11 @@ module VCAP::CloudController
         Errors::ServiceBindingInvalid.new(e.errors.full_messages)
       end
     end
+
+    def service_bindable?
+      service_instance = ServiceInstance.find(:guid => request_attrs['service_instance_guid'])
+      service_instance.bindable?
+    end
+
   end
 end

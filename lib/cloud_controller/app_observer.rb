@@ -1,4 +1,3 @@
-require "vcap/stager/client"
 require "cloud_controller/multi_response_message_bus_request"
 require "models/runtime/droplet_uploader"
 
@@ -55,6 +54,10 @@ module VCAP::CloudController
       def stage_app(app, &completion_callback)
         if app.package_hash.nil? || app.package_hash.empty?
           raise Errors::AppPackageInvalid, "The app package hash is empty"
+        end
+
+        if app.buildpack.custom? && !App.custom_buildpacks_enabled?
+          raise Errors::CustomBuildpacksDisabled
         end
 
         task = AppStagerTask.new(@config, @message_bus, app, @stager_pool, dependency_locator.blobstore_url_generator)

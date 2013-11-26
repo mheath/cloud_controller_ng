@@ -1,11 +1,11 @@
 module VCAP::CloudController
   module ServiceBroker::V1
     class HttpClient
-      TIMEOUT = 60 # seconds
 
       def initialize(attrs)
         @url = attrs.fetch(:url)
         @token = attrs.fetch(:auth_token)
+        @broker_client_timeout = VCAP::CloudController::Config.config[:broker_client_timeout_seconds] || 60
       end
 
       def provision(plan_id, name, options = {})
@@ -44,6 +44,8 @@ module VCAP::CloudController
 
       private
 
+      attr_reader :broker_client_timeout
+
       def execute(method, path, body = nil)
         endpoint = @url + path
         uri = URI(endpoint)
@@ -56,17 +58,23 @@ module VCAP::CloudController
         request[VCAP::Request::HEADER_NAME] = VCAP::Request.current_id
         request['X-VCAP-Service-Token'] = @token
 
-        logger.debug "Sending #{req_class} to #{uri.request_uri}, BODY: #{request.body}, HEADERS: #{request.to_hash.inspect}"
+        logger.debug "Sending #{req_class} to #{uri.request_uri}, BODY: #{request.body.inspect}, HEADERS: #{request.to_hash.inspect}"
 
+<<<<<<< HEAD
         use_ssl = uri.scheme.downcase == 'https'
         response = Net::HTTP.start(uri.hostname, uri.port, :use_ssl=> use_ssl) do |http|
           http.open_timeout = TIMEOUT
           http.read_timeout = TIMEOUT
+=======
+        response = Net::HTTP.start(uri.hostname, uri.port) do |http|
+          http.open_timeout = broker_client_timeout
+          http.read_timeout = broker_client_timeout
+>>>>>>> master
 
           http.request(request)
         end
 
-        logger.debug "Response from request to #{uri.request_uri}: STATUS #{response.code.to_i}, BODY: #{response.body}, HEADERS: #{response.to_hash.inspect}"
+        logger.debug "Response from request to #{uri.request_uri}: STATUS #{response.code.to_i}, BODY: #{response.body.inspect}, HEADERS: #{response.to_hash.inspect}"
 
         case response
         when Net::HTTPSuccess

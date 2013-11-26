@@ -38,13 +38,11 @@ module VCAP::CloudController
           optional(:syslog)   => String,      # Name to associate with syslog messages (should start with 'vcap.')
         },
 
-        :message_bus_uri              => String,     # Currently a NATS uri of the form nats://<user>:<pass>@<host>:<port>
+        :message_bus_servers   => [String],   # A list of NATS uris of the form nats://<user>:<pass>@<host>:<port>
         :pid_filename          => String,     # Pid filename to use
 
         optional(:directories) => {
           optional(:tmpdir)    => String,
-          optional(:droplets)  => String,
-          optional(:staging_manifests) => String,
         },
 
         optional(:stacks_file) => String,
@@ -119,15 +117,14 @@ module VCAP::CloudController
         optional(:tasks_disabled) => bool,
 
         optional(:hm9000_noop) => bool,
-        optional(:hm9000_api_host) => String,
-        optional(:hm9000_api_port) => Integer,
-        optional(:hm9000_api_user) => String,
-        optional(:hm9000_api_password) => String,
+        optional(:flapping_crash_count_threshold) => Integer,
 
         optional(:varz_port) => Integer,
         optional(:varz_user) => String,
         optional(:varz_password) => String,
-        optional(:varz_update_user_count_period_in_seconds) => Float
+        optional(:varz_update_user_count_period_in_seconds) => Float,
+        optional(:disable_custom_buildpacks) => bool,
+        optional(:broker_client_timeout_seconds) => Integer
       }
     end
 
@@ -151,6 +148,7 @@ module VCAP::CloudController
         QuotaDefinition.configure(config)
         Stack.configure(config[:stacks_file])
         ServicePlan.configure(config[:trial_db])
+        App.configure(!config[:disable_custom_buildpacks])
 
         run_initializers(config)
       end
@@ -190,9 +188,7 @@ module VCAP::CloudController
 
       def merge_defaults(config)
         config[:stacks_file] ||= File.join(config_dir, "stacks.yml")
-
         config[:directories] ||= {}
-        config[:directories][:staging_manifests] ||= File.join(config_dir, "frameworks")
         config
       end
     end

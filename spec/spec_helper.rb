@@ -24,13 +24,19 @@ require "posix/spawn"
 require "rspec_api_documentation"
 
 module VCAP::CloudController
+  MAX_LOG_FILE_SIZE_IN_BYTES = 100_000_000
   class SpecEnvironment
     def initialize
       ENV["CC_TEST"] = "true"
       FileUtils.mkdir_p(artifacts_dir)
+
+      if File.exist?(log_filename) && File.size(log_filename) > MAX_LOG_FILE_SIZE_IN_BYTES
+        FileUtils.rm_f(log_filename)
+      end
+
       Steno.init(Steno::Config.new(
-        :default_log_level => "debug",
-        :sinks => [Steno::Sink::IO.for_file(log_filename)]
+        default_log_level: "info",
+        sinks: [Steno::Sink::IO.for_file(log_filename)]
       ))
 
       VCAP::CloudController::Config.run_initializers(config)
@@ -78,8 +84,9 @@ module VCAP::CloudController
 
         VCAP::CloudController::DB.connect(
           db_logger,
-          { log_level: "debug",
-            database: "#{db_connection}" }
+          log_level: "debug",
+          database: "#{db_connection}",
+          pool_timeout: 10,
         )
       end
     end
@@ -575,6 +582,14 @@ RSpec.configure do |rspec_config|
     # Is event emitter our salvation?
     #VCAP::CloudController::AppObserver.stub(:delete_droplet)
     Fog::Mock.reset
+
+    Sequel::Deprecation.output = StringIO.new
+    Sequel::Deprecation.backtrace_filter = 5
+  end
+
+  rspec_config.after :each do
+    expect(Sequel::Deprecation.output.string).to eq ''
+    Sequel::Deprecation.output.close unless Sequel::Deprecation.output.closed?
   end
 
   rspec_config.around :each do |example|

@@ -67,6 +67,8 @@ module VCAP::CloudController
 
     delegate :client, to: :service_plan
 
+    add_association_dependencies :service_bindings => :destroy
+
     def validate
       super
       validates_presence :service_plan
@@ -115,10 +117,7 @@ module VCAP::CloudController
           return
         end
 
-        quota_errors = space.organization.check_quota?(service_plan)
-        unless quota_errors.empty?
-          errors.add(quota_errors[:type], quota_errors[:name])
-        end
+        MaxServiceInstancePolicy.new(organization, self).check_quota
       end
     end
 

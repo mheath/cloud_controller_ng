@@ -8,7 +8,7 @@ module VCAP::CloudController
       include_examples "reading a valid object", path: "/v2/users", model: User, basic_attributes: []
       include_examples "operations on an invalid object", path: "/v2/users"
       include_examples "creating and updating", path: "/v2/users", model: User, required_attributes: %w(guid), unique_attributes: %w(guid)
-      include_examples "deleting a valid object", path: "/v2/users", model: User, one_to_many_collection_ids: {}, one_to_many_collection_ids_without_url: {}
+      include_examples "deleting a valid object", path: "/v2/users", model: User, one_to_many_collection_ids: {}
       include_examples "collection operations", path: "/v2/users", model: User,
         one_to_many_collection_ids: {},
         many_to_one_collection_ids: {
@@ -19,9 +19,21 @@ module VCAP::CloudController
         },
         many_to_many_collection_ids: {
           organizations: lambda { |_| Organization.make },
-          managed_organizations: lambda { |_| Organization.make },
-          billing_managed_organizations: lambda { |_| Organization.make },
-          audited_organizations: lambda { |_| Organization.make },
+          managed_organizations: lambda { |user|
+            org = Organization.make
+            user.add_organization(org)
+            org
+          },
+          billing_managed_organizations: lambda { |user|
+            org = Organization.make
+            user.add_organization(org)
+            org
+          },
+          audited_organizations: lambda { |user|
+            org = Organization.make
+            user.add_organization(org)
+            org
+          },
           spaces: lambda { |user|
             org = user.organizations.first || Organization.make
             Space.make(organization: org)

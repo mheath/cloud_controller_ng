@@ -13,8 +13,9 @@ module VCAP::CloudController
                      unique_attributes: %w(label provider),
                      extra_attributes: {extra: ->{Sham.extra}, bindable: false, tags: ["relational"], requires: ["loggyness"]}
     include_examples "deleting a valid object", path: "/v2/services", model: Service,
-      one_to_many_collection_ids: {:service_plans => lambda { |service| ServicePlan.make(:service => service) }},
-      one_to_many_collection_ids_without_url: {}
+      one_to_many_collection_ids: {
+        :service_plans => lambda { |service| ServicePlan.make(:service => service) },
+      }
     include_examples "collection operations", path: "/v2/services", model: Service,
       one_to_many_collection_ids: {
         service_plans: lambda { |service| ServicePlan.make(service: service) }
@@ -298,7 +299,7 @@ module VCAP::CloudController
     end
 
     describe "PUT", "/v2/services/:guid" do
-      it "ignores the unique_id attribute" do
+      it "updates the unique_id attribute" do
         service = Service.make
         old_unique_id = service.unique_id
         new_unique_id = old_unique_id.reverse
@@ -308,7 +309,7 @@ module VCAP::CloudController
 
         service.reload
         expect(last_response.status).to be == 201
-        expect(service.unique_id).to be == old_unique_id
+        expect(service.unique_id).to be == new_unique_id
       end
     end
   end

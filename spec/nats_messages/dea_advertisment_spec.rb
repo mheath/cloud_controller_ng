@@ -7,6 +7,7 @@ describe DeaAdvertisement do
       "id" => "staging-id",
       "stacks" => ["stack-name"],
       "available_memory" => 1024,
+      "available_disk" => 756,
       "app_id_to_count" => {
         "app_id" => 2,
         "app_id_2" => 1
@@ -26,6 +27,10 @@ describe DeaAdvertisement do
 
   describe "#available_memory" do
     its(:available_memory) { should eq 1024 }
+  end
+
+  describe "#available_disk" do
+    its(:available_disk) { should eq 756 }
   end
 
   describe "#expired?" do
@@ -97,6 +102,28 @@ describe DeaAdvertisement do
     end
   end
 
+  describe "#has_sufficient_disk?" do
+    context "when the dea does not have enough disk" do
+      it "returns false" do
+        expect(ad.has_sufficient_disk?(2048)).to be_false
+      end
+    end
+
+    context "when the dea does have enough disk" do
+      it "returns false" do
+        expect(ad.has_sufficient_disk?(512)).to be_true
+      end
+    end
+
+    context "when the dea does not report disk space" do
+      before { message.delete "available_disk" }
+
+      it "always returns true" do
+        expect(ad.has_sufficient_disk?(4096 * 10)).to be_true
+      end
+    end
+  end
+
   describe "#has_stack?" do
     context "when the dea has the stack" do
       it "returns false" do
@@ -125,4 +152,29 @@ describe DeaAdvertisement do
       }.from(2).to(3)
     end
   end
+
+  describe "#zone" do
+    context "when the dea does not have the placement properties" do
+      it "returns default zone" do
+        expect(ad.zone).to eq "default"
+      end
+    end
+
+    context "when the dea has empty placement properties" do
+      before{ message["placement_properties"] = {} }
+
+      it "returns default zone" do
+        expect(ad.zone).to eq "default"
+      end
+    end
+
+    context "when the dea has the placement properties with zone info" do
+      before{ message["placement_properties"] = { "zone" => "zone_cf" } }
+
+      it "returns the zone with name zone_cf" do
+        expect(ad.zone).to eq "zone_cf"
+      end
+    end
+  end
+
 end

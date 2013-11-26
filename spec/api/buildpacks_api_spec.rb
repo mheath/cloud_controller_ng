@@ -3,37 +3,30 @@ require 'rspec_api_documentation/dsl'
 
 resource "Buildpacks (experimental)", :type => :api do
   let(:admin_auth_header) { headers_for(admin_user, :admin_scope => true)["HTTP_AUTHORIZATION"] }
+  let!(:buildpacks) { (1..3).map { |i| VCAP::CloudController::Buildpack.make(name: "name_#{i}", position: i) } }
+  let(:guid) { buildpacks.first.guid }
+
   authenticated_request
+  standard_parameters VCAP::CloudController::BuildpacksController
 
-  before do
-    3.times do |i|
-      i += 1
-      VCAP::CloudController::Buildpack.make(name: "name_#{i}", position: i)
-    end
-  end
-
-  let(:guid) { VCAP::CloudController::Buildpack.first.guid }
-
-  standard_parameters
-
-  field :name, "The name of the buildpack. To be used by app buildpack field.", required: true
+  field :guid, "The guid of the buildpack.", required: false
+  field :name, "The name of the buildpack. To be used by app buildpack field. (only alphanumeric characters)", required: true, example_values: ["Golang_buildpack"]
   field :position, "The order in which the buildpacks are checked during buildpack auto-detection.", required: false
+  field :enabled, "Whether or not the buildpack will be used for staging", required: false, default: true
 
-  standard_model_object :buildpack
+  standard_model_list(:buildpack)
+  standard_model_get(:buildpack)
+  standard_model_delete(:buildpack)
 
   post "/v2/buildpacks" do
-    let(:name) { "A-buildpack-name" }
-
     example "Creates an admin buildpack" do
-      client.post "/v2/buildpacks", Yajl::Encoder.encode(params), headers
-      status.should == 201
-      standard_entity_response parsed_response, :buildpack, :name => name
+      client.post "/v2/buildpacks", fields_json, headers
+      expect(status).to eq 201
+      standard_entity_response parsed_response, :buildpack, name: "Golang_buildpack"
     end
   end
 
   put "/v2/buildpacks" do
-    let(:position) { 3 }
-
     example "Change the position of a buildpack" do
       first = <<-DOC
         Buildpacks are maintained in an ordered list.  If the target position is already occupied,
@@ -49,9 +42,9 @@ resource "Buildpacks (experimental)", :type => :api do
       explanation [{explanation: first}, {explanation: second}]
 
       expect {
-        client.put "/v2/buildpacks/#{guid}", Yajl::Encoder.encode(params), headers
+        client.put "/v2/buildpacks/#{guid}", Yajl::Encoder.encode(position: 3), headers
         status.should == 201
-        standard_entity_response parsed_response, :buildpack, position: position
+        standard_entity_response parsed_response, :buildpack, position: 3
       }.to change {
         VCAP::CloudController::Buildpack.order(:position).map { |bp| [bp.name, bp.position] }
       }.from(
@@ -59,6 +52,24 @@ resource "Buildpacks (experimental)", :type => :api do
       ).to(
         [["name_2", 1], ["name_3", 2], ["name_1", 3]]
       )
+    end
+
+    example "Enable or disable a buildpack" do
+      expect {
+        client.put "/v2/buildpacks/#{guid}", Yajl::Encoder.encode(enabled: false), headers
+        expect(status).to eq 201
+        standard_entity_response parsed_response, :buildpack, enabled: false
+      }.to change {
+        VCAP::CloudController::Buildpack.find(guid: guid).enabled
+      }.from(true).to(false)
+
+      expect {
+        client.put "/v2/buildpacks/#{guid}", Yajl::Encoder.encode(enabled: true), headers
+        expect(status).to eq 201
+        standard_entity_response parsed_response, :buildpack, enabled: true
+      }.to change {
+        VCAP::CloudController::Buildpack.find(guid: guid).enabled
+      }.from(false).to(true)
     end
   end
 
@@ -81,7 +92,7 @@ resource "Buildpacks (experimental)", :type => :api do
       explanation "PUT not shown because it involves putting a large zip file. Right now only zipped admin buildpacks are accepted"
 
       no_doc do
-        client.put "/v2/buildpacks/#{guid}/bits", {:buildpack => valid_zip}, headers
+        client.put "/v2/buildpacks/#{guid}/bits", {buildpack: valid_zip}, headers
       end
 
       status.should == 201

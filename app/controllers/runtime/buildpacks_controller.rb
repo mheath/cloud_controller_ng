@@ -5,6 +5,7 @@ module VCAP::CloudController
     define_attributes do
       attribute :name, String
       attribute :position, Integer, default: 0
+      attribute :enabled, Message::Boolean, default: true
     end
 
     query_parameters :name
@@ -18,10 +19,23 @@ module VCAP::CloudController
       end
     end
 
-    def after_destroy(buildpack)
-      return unless buildpack.key
-      file = buildpack_blobstore.file(buildpack.key)
-      file.destroy if file
+    def delete(guid)
+      logger.debug "cc.delete", :guid => guid
+
+      buildpack = find_guid_and_validate_access(:delete, guid)
+
+      raise_if_has_associations!(buildpack) if v2_api? && !recursive?
+
+      blobstore_key = buildpack.key
+
+      buildpack.destroy
+
+      if blobstore_key
+        blobstore_delete = BlobstoreDelete.new(blobstore_key, :buildpack_blobstore)
+        Delayed::Job.enqueue(blobstore_delete, queue: "cc-generic")
+      end
+
+      [ HTTP::NO_CONTENT, nil ]
     end
 
     # New guy for updating
@@ -33,7 +47,7 @@ module VCAP::CloudController
       model.db.transaction(savepoint: true) do
         obj.lock!
         obj.update_from_hash(attrs)
-        obj.shift_to_position(target_position)
+        obj.shift_to_position(target_position) if target_position
       end
 
       [HTTP::CREATED, serialization.render_json(self.class, obj, @opts)]

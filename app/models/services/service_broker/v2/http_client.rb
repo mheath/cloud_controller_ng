@@ -85,10 +85,11 @@ module VCAP::CloudController
         @url = attrs.fetch(:url)
         @auth_username = attrs.fetch(:auth_username)
         @auth_password = attrs.fetch(:auth_password)
+        @broker_client_timeout = VCAP::CloudController::Config.config[:broker_client_timeout_seconds] || 60
       end
 
       def catalog
-        execute(:get, '/v2/catalog')
+        get('/v2/catalog')
       end
 
       # The broker is expected to guarantee uniqueness of instance_id.
@@ -100,7 +101,7 @@ module VCAP::CloudController
         org_guid = params.fetch(:org_guid)
         space_guid = params.fetch(:space_guid)
 
-        execute(:put, "/v2/service_instances/#{instance_id}", {
+        put("/v2/service_instances/#{instance_id}", {
           service_id: service_id,
           plan_id: plan_id,
           organization_guid: org_guid,
@@ -114,7 +115,7 @@ module VCAP::CloudController
         plan_id = params.fetch(:plan_id)
         service_id = params.fetch(:service_id)
 
-        execute(:put, "/v2/service_instances/#{instance_id}/service_bindings/#{binding_id}", {
+        put("/v2/service_instances/#{instance_id}/service_bindings/#{binding_id}", {
           plan_id: plan_id,
           service_id: service_id,
         })
@@ -126,7 +127,7 @@ module VCAP::CloudController
         plan_id = params.fetch(:plan_id)
         service_id = params.fetch(:service_id)
 
-        execute(:delete, "/v2/service_instances/#{instance_id}/service_bindings/#{binding_id}", {
+        delete("/v2/service_instances/#{instance_id}/service_bindings/#{binding_id}", {
           plan_id: plan_id,
           service_id: service_id,
         })
@@ -137,7 +138,7 @@ module VCAP::CloudController
         plan_id = params.fetch(:plan_id)
         service_id = params.fetch(:service_id)
 
-        execute(:delete, "/v2/service_instances/#{instance_id}", {
+        delete("/v2/service_instances/#{instance_id}", {
           plan_id: plan_id,
           service_id: service_id,
         })
@@ -145,24 +146,25 @@ module VCAP::CloudController
 
       private
 
-      attr_reader :url, :auth_username, :auth_password
+      attr_reader :url, :auth_username, :auth_password, :broker_client_timeout
 
-      # hits the endpoint, json decodes the response
-      def execute(method, path, message=nil)
-        endpoint = url + path
-        uri = URI(endpoint)
+      def get(path)
+        uri = URI( url + path )
+        response = make_request(:get, uri, nil)
+        parse_response(:get, uri, response)
+      end
 
-        case method
-          when :put
-            response = make_request(method, uri, message.to_json)
-          when :get, :delete
-            uri.query = message.to_query if message
-            response = make_request(method, uri, nil)
-          else
-            raise ArgumentError.new("Don't know how to handle method: #{method.inspect}")
-        end
+      def put(path, message)
+        uri = URI( url + path )
+        response = make_request(:put, uri, message.to_json)
+        parse_response(:put, uri, response)
+      end
 
-        parse_response(method, uri, response)
+      def delete(path, message)
+        uri = URI( url + path )
+        uri.query = message.to_query
+        response = make_request(:delete, uri, nil)
+        parse_response(:delete, uri, response)
       end
 
       def make_request(method, uri, body)
@@ -176,13 +178,12 @@ module VCAP::CloudController
           req[VCAP::Request::HEADER_BROKER_API_VERSION] = '2.0'
           req['Accept'] = 'application/json'
 
-          logger.debug "Sending #{req_class} to #{uri}, BODY: #{req.body}, HEADERS: #{req.to_hash.inspect}"
+          logger.debug "Sending #{req_class} to #{uri}, BODY: #{req.body.inspect}, HEADERS: #{req.to_hash.inspect}"
 
           use_ssl = uri.scheme.downcase == 'https'
           response = Net::HTTP.start(uri.hostname, uri.port, :use_ssl=> use_ssl) do |http|
-            # TODO: make this configurable?
-            http.open_timeout = 60
-            http.read_timeout = 60
+            http.open_timeout = broker_client_timeout
+            http.read_timeout = broker_client_timeout
 
             http.request(req)
           end
@@ -198,7 +199,7 @@ module VCAP::CloudController
       def parse_response(method, uri, response)
         code = response.code.to_i
 
-        logger.debug "Response from request to #{uri}: STATUS #{code}, BODY: #{response.body}, HEADERS: #{response.to_hash.inspect}"
+        logger.debug "Response from request to #{uri}: STATUS #{code}, BODY: #{response.body.inspect}, HEADERS: #{response.to_hash.inspect}"
 
         case code
 

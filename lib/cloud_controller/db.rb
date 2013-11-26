@@ -44,6 +44,7 @@ module VCAP::CloudController
     end
 
     def self.load_models
+      require "models/runtime/app_bits_package"
       require "models/runtime/auto_detection_buildpack"
       require "models/runtime/deleted_space"
       require "models/runtime/billing_event"
@@ -58,7 +59,10 @@ module VCAP::CloudController
       require "models/runtime/event"
       require "models/runtime/git_based_buildpack"
       require "models/runtime/organization"
+      require "models/runtime/organization_routes"
       require "models/runtime/quota_definition"
+      require "models/runtime/quota_constraints/max_routes_policy"
+      require "models/runtime/quota_constraints/max_service_instances_policy"
       require "models/runtime/route"
       require "models/runtime/task"
       require "models/runtime/space"

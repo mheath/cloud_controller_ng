@@ -1,22 +1,19 @@
 module VCAP::CloudController
   class Buildpack < Sequel::Model
 
-    export_attributes :name, :position
+    export_attributes :name, :position, :enabled
 
-    import_attributes :name, :key, :position
+    import_attributes :name, :key, :position, :enabled
 
-    def self.list_admin_buildpacks(url_generator)
+    def self.list_admin_buildpacks
       results = exclude(:key => nil).exclude(:key => "").order(:position).all
       index_of_first_prioritized_position = results.find_index { |result| result.position > 0 }
+
       if index_of_first_prioritized_position
         results = results[index_of_first_prioritized_position..-1] + results.take(index_of_first_prioritized_position)
       end
-      results.map do |bp|
-        {
-          key: bp.key,
-          url: url_generator.admin_buildpack_download_url(bp)
-        }
-      end
+
+      results
     end
 
     def self.at_last_position
@@ -67,7 +64,7 @@ module VCAP::CloudController
 
     def validate
       validates_unique :name
-      validates_format(/^(\w|\-)+$/, :name, :message => "name can only contain alphanumeric characters")
+      validates_format(/^(\w|\-)+$/, :name, message: "name can only contain alphanumeric characters")
     end
 
     def self.user_visibility_filter(user)
@@ -75,7 +72,7 @@ module VCAP::CloudController
     end
 
     def to_json
-      %Q("#{name}")
+      Yajl::Encoder.encode name
     end
 
     def shift_and_update_positions(last_position, target_position)
@@ -88,6 +85,10 @@ module VCAP::CloudController
       end
 
       update(position: target_position)
+    end
+
+    def custom?
+      false
     end
 
     private

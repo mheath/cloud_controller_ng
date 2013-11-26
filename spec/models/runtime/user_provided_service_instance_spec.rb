@@ -1,6 +1,8 @@
 require "spec_helper"
 
 describe VCAP::CloudController::UserProvidedServiceInstance, type: :model do
+  let(:service_instance) { VCAP::CloudController::UserProvidedServiceInstance.make }
+
   it_behaves_like "a model with an encrypted attribute" do
     def new_model
       described_class.create(
@@ -34,8 +36,6 @@ describe VCAP::CloudController::UserProvidedServiceInstance, type: :model do
       },
     },
   }
-
-  let(:service_instance) { VCAP::CloudController::UserProvidedServiceInstance.make }
 
   describe "serialization" do
     it "includes its type" do

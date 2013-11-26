@@ -9,10 +9,10 @@ module VCAP::CloudController
     default_order_by  :id
 
     export_attributes :app_guid, :service_instance_guid, :credentials,
-                      :binding_options, :gateway_data, :gateway_name
+                      :binding_options, :gateway_data, :gateway_name, :syslog_drain_url
 
     import_attributes :app_guid, :service_instance_guid, :credentials,
-                      :binding_options, :gateway_data
+                      :binding_options, :gateway_data, :syslog_drain_url
 
     alias_attribute :broker_provided_id, :gateway_name
 
@@ -33,7 +33,8 @@ module VCAP::CloudController
     end
 
     def validate_logging_service_binding
-      unless syslog_drain_url.nil? || syslog_drain_url.empty? || service_instance.service_plan.service.requires.include?("syslog_drain")
+      unless syslog_drain_url.nil? || syslog_drain_url.empty? ||
+          service_instance.service_plan.service.requires.include?("syslog_drain")
         raise InvalidLoggingServiceBinding.new("Service is not advertised as a logging service. Please contact the service provider.")
       end
     end
@@ -47,13 +48,25 @@ module VCAP::CloudController
       end
     end
 
-    def space
-      service_instance.space
+    def bind!
+      client.bind(self)
+
+      begin
+        save
+      rescue => e
+        begin
+          # TODO: When we do async requests, this should go into a retry queue
+          client.unbind(self)
+        rescue => unbind_e
+          logger.error "Unable to unbind #{self}: #{unbind_e}"
+        end
+
+        raise e
+      end
     end
 
-    def before_create
-      super
-      raise VCAP::Errors::UnbindableService unless service_instance.bindable?
+    def space
+      service_instance.space
     end
 
     def after_create

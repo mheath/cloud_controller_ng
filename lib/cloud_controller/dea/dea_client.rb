@@ -1,4 +1,3 @@
-require "vcap/stager/client"
 require "vcap/errors"
 
 module VCAP::CloudController
@@ -17,6 +16,7 @@ module VCAP::CloudController
       end
     end
 
+    ACTIVE_APP_STATES = [:RUNNING, :STARTING].freeze
     class << self
       include VCAP::Errors
 
@@ -45,14 +45,14 @@ module VCAP::CloudController
       end
 
       def find_specific_instance(app, options = {})
-        message = { :droplet => app.guid }
+        message = {droplet: app.guid}
         message.merge!(options)
 
         dea_request_find_droplet(message, :timeout => 2).first
       end
 
       def find_instances(app, message_options = {}, request_options = {})
-        message = { :droplet => app.guid }
+        message = {droplet: app.guid}
         message.merge!(message_options)
 
         request_options[:result_count] ||= app.instances
@@ -78,32 +78,32 @@ module VCAP::CloudController
           index = entry["index"]
           if index >= 0 && index < num_instances
             all_instances[index] = {
-                :state => "FLAPPING",
-                :since => entry["since"],
+              state: "FLAPPING",
+              since: entry["since"],
             }
           end
         end
 
         message = {
-            :states => [:STARTING, :RUNNING],
-            :version => app.version,
+          states: [:STARTING, :RUNNING],
+          version: app.version,
         }
 
         expected_running_instances = num_instances - all_instances.length
         if expected_running_instances > 0
-          request_options = { :expected => expected_running_instances }
+          request_options = {expected: expected_running_instances}
           running_instances = find_instances(app, message, request_options)
 
           running_instances.each do |instance|
             index = instance["index"]
             if index >= 0 && index < num_instances
               all_instances[index] = {
-                  :state => instance["state"],
-                  :since => instance["state_timestamp"],
-                  :debug_ip => instance["debug_ip"],
-                  :debug_port => instance["debug_port"],
-                  :console_ip => instance["console_ip"],
-                  :console_port => instance["console_port"]
+                state: instance["state"],
+                since: instance["state_timestamp"],
+                debug_ip: instance["debug_ip"],
+                debug_port: instance["debug_port"],
+                console_ip: instance["console_ip"],
+                console_port: instance["console_port"]
               }
             end
           end
@@ -112,8 +112,8 @@ module VCAP::CloudController
         num_instances.times do |index|
           unless all_instances[index]
             all_instances[index] = {
-                :state => "DOWN",
-                :since => Time.now.to_i,
+              state: "DOWN",
+              since: Time.now.to_i,
             }
           end
         end
@@ -142,7 +142,7 @@ module VCAP::CloudController
         message = start_app_message(app)
         message[:index] = index
 
-        dea_id = dea_pool.find_dea(app.memory, app.stack.name, app.guid)
+        dea_id = dea_pool.find_dea(mem: app.memory, disk: app.disk_quota, stack: app.stack.name, app_id: app.guid)
         if dea_id
           dea_publish_start(dea_id, message)
           dea_pool.mark_app_started(dea_id: dea_id, app_id: app.guid)
@@ -153,43 +153,44 @@ module VCAP::CloudController
 
       # @param [Array] indices an Enumerable of integer indices
       def stop_indices(app, indices)
-        dea_publish_stop(:droplet => app.guid,
-                         :version => app.version,
-                         :indices => indices
+        dea_publish_stop(droplet: app.guid,
+          version: app.version,
+          indices: indices
         )
       end
 
       # @param [Array] indices an Enumerable of guid instance ids
       def stop_instances(app, instances)
         dea_publish_stop(
-            :droplet => app.guid,
-            :instances => instances
+          droplet: app.guid,
+          instances: instances
         )
       end
 
       def stop_instance(app_guid, instance)
         dea_publish_stop(
-          :droplet => app_guid,
-          :instances => [instance]
+          droplet: app_guid,
+          instances: [instance]
         )
       end
 
-      def get_file_uri_for_instance(app, path, instance)
-        if instance < 0 || instance >= app.instances
-          msg = "Request failed for app: #{app.name}, instance: #{instance}"
+      def get_file_uri_for_active_instance_by_index(app, path, index)
+        if index < 0 || index >= app.instances
+          msg = "Request failed for app: #{app.name}, instance: #{index}"
           msg << " and path: #{path || '/'} as the instance is out of range."
 
           raise FileError.new(msg)
         end
 
-        search_opts = {
-          :indices => [instance],
-          :version => app.version
+        search_criteria = {
+          indices: [index],
+          version: app.version,
+          states: ACTIVE_APP_STATES
         }
 
-        result = get_file_uri(app, path, search_opts)
+        result = get_file_uri(app, path, search_criteria)
         unless result
-          msg = "Request failed for app: #{app.name}, instance: #{instance}"
+          msg = "Request failed for app: #{app.name}, instance: #{index}"
           msg << " and path: #{path || '/'} as the instance is not found."
 
           raise FileError.new(msg)
@@ -197,7 +198,7 @@ module VCAP::CloudController
         result
       end
 
-      def get_file_uri_for_instance_id(app, path, instance_id)
+      def get_file_uri_by_instance_guid(app, path, instance_id)
         result = get_file_uri(app, path, :instance_ids => [instance_id])
         unless result
           msg = "Request failed for app: #{app.name}, instance_id: #{instance_id}"
@@ -230,9 +231,9 @@ module VCAP::CloudController
         end
 
         search_options = {
-          :include_stats => true,
-          :states => [:RUNNING],
-          :version => app.version,
+          include_stats: true,
+          states: [:RUNNING],
+          version: app.version,
         }
 
         running_instances = find_instances(app, search_options)
@@ -252,8 +253,8 @@ module VCAP::CloudController
         app.instances.times do |index|
           unless stats[index]
             stats[index] = {
-              :state => "DOWN",
-              :since => Time.now.to_i,
+              state: "DOWN",
+              since: Time.now.to_i,
             }
           end
         end
@@ -264,27 +265,27 @@ module VCAP::CloudController
       def start_app_message(app)
         # TODO: add debug support
         {
-          :droplet => app.guid,
-          :name => app.name,
-          :uris => app.uris,
-          :prod => app.production,
-          :sha1 => app.droplet_hash,
-          :executableFile => "deprecated",
-          :executableUri => @blobstore_url_generator.droplet_download_url(app),
-          :version => app.version,
-          :services => app.service_bindings.map do |sb|
+          droplet: app.guid,
+          name: app.name,
+          uris: app.uris,
+          prod: app.production,
+          sha1: app.droplet_hash,
+          executableFile: "deprecated",
+          executableUri: @blobstore_url_generator.droplet_download_url(app),
+          version: app.version,
+          services: app.service_bindings.map do |sb|
             ServiceBindingPresenter.new(sb).to_hash
           end,
-          :limits => {
-            :mem => app.memory,
-            :disk => app.disk_quota,
-            :fds => app.file_descriptors
+          limits: {
+            mem: app.memory,
+            disk: app.disk_quota,
+            fds: app.file_descriptors
           },
-          :cc_partition => config[:cc_partition],
-          :env => (app.environment_json || {}).map {|k,v| "#{k}=#{v}"},
-          :console => app.console,
-          :debug => app.debug,
-          :start_command => app.command,
+          cc_partition: config[:cc_partition],
+          env: (app.environment_json || {}).map { |k, v| "#{k}=#{v}" },
+          console: app.console,
+          debug: app.debug,
+          start_command: app.command,
         }
       end
 
@@ -314,11 +315,11 @@ module VCAP::CloudController
         end
 
         search_options = {
-          :states => [:STARTING, :RUNNING, :CRASHED],
-          :path => path,
+          states: [:STARTING, :RUNNING, :CRASHED],
+          path: path,
         }.merge(options)
 
-        if instance_found = find_specific_instance(app, search_options)
+        if (instance_found = find_specific_instance(app, search_options))
           result = FileUriResult.new
           if instance_found["file_uri_v2"]
             result.file_uri_v2 = instance_found["file_uri_v2"]
@@ -336,9 +337,9 @@ module VCAP::CloudController
 
       def dea_update_message(app)
         {
-          :droplet  => app.guid,
-          :uris     => app.uris,
-          :version  => app.version,
+          droplet: app.guid,
+          uris: app.uris,
+          version: app.version,
         }
       end
 

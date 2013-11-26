@@ -1,3 +1,4 @@
+# encoding: utf-8
 require "spec_helper"
 
 module VCAP::CloudController
@@ -20,6 +21,47 @@ module VCAP::CloudController
         }
       }
     }
+
+    describe "validations" do
+      context "name" do
+        let(:org) { Organization.make }
+
+        it "shoud allow standard ascii characters" do
+          org.name = "A -_- word 2!?()\'\"&+."
+          expect{
+            org.save
+          }.to_not raise_error
+        end
+
+        it "should allow backslash characters" do
+          org.name = "a\\word"
+          expect{
+            org.save
+          }.to_not raise_error
+        end
+
+        it "should allow unicode characters" do
+          org.name = "防御力¡"
+          expect{
+            org.save
+          }.to_not raise_error
+        end
+
+        it "should not allow newline characters" do
+          org.name = "one\ntwo"
+          expect{
+            org.save
+          }.to raise_error(Sequel::ValidationFailed)
+        end
+
+        it "should not allow escape characters" do
+          org.name = "a\e word"
+          expect{
+            org.save
+          }.to raise_error(Sequel::ValidationFailed)
+        end
+      end
+    end
 
     describe "default domains" do
       context "with the default serving domain name set" do
@@ -109,62 +151,6 @@ module VCAP::CloudController
       end
     end
 
-    context "service instances quota" do
-      let(:free_quota) do
-        QuotaDefinition.make(:total_services => 1,
-                                     :non_basic_services_allowed => false)
-      end
-
-      let(:paid_quota) do
-        QuotaDefinition.make(:total_services => 1,
-          :non_basic_services_allowed => true)
-      end
-
-      let(:unlimited_quota) do
-        QuotaDefinition.make(:total_services => -1,
-          :non_basic_services_allowed => true)
-      end
-
-      let(:free_plan) { ServicePlan.make(:free => true)}
-
-      describe "#service_instance_quota_remaining?" do
-        it "should return true when quota is not reached" do
-          org = Organization.make(:quota_definition => free_quota)
-          space = Space.make(:organization => org)
-          org.service_instance_quota_remaining?.should be_true
-        end
-
-        it "should return false when quota is reached" do
-          org = Organization.make(:quota_definition => free_quota)
-          space = Space.make(:organization => org)
-          org.service_instance_quota_remaining?.should be_true
-          ManagedServiceInstance.make(:space => space,
-                                       :service_plan => free_plan).
-            save(:validate => false)
-          org.refresh
-          org.service_instance_quota_remaining?.should be_false
-        end
-
-        it "returns true when the limit is -1 (unlimited)" do
-          org = Organization.make(:quota_definition => unlimited_quota)
-          space = Space.make(:organization => org)
-          org.service_instance_quota_remaining?.should be_true
-        end
-      end
-
-      describe "#paid_services_allowed" do
-        it "should return true when org has paid quota" do
-          org = Organization.make(:quota_definition => paid_quota)
-          org.paid_services_allowed?.should be_true
-        end
-
-        it "should return false when org has free quota" do
-          org = Organization.make(:quota_definition => free_quota)
-          org.paid_services_allowed?.should be_false
-        end
-      end
-    end
-
     context "memory quota" do
       let(:quota) do
         QuotaDefinition.make(:memory_limit => 500)
@@ -231,153 +217,6 @@ module VCAP::CloudController
         domain.add_organization(org)
         domain.save
         expect { org.destroy(savepoint: true) }.to change { domain.reload.organizations.count }.by(-1)
-      end
-    end
-
-    describe "#trial_db_allocated?" do
-      let(:org) { Organization.make }
-      let(:space) { Space.make :organization => org }
-      let(:trial_db_guid) { ServicePlan.trial_db_guid }
-      subject { org.trial_db_allocated? }
-
-      context "when a trial db instance has not been allocated" do
-        it "retruns false" do
-          expect(subject).to eq false
-        end
-      end
-
-      context "when a trial db instance has been allocated" do
-        let(:service_plan) { ServicePlan.make :unique_id => trial_db_guid}
-        it "returns true" do
-          ManagedServiceInstance.make(:space => space, :service_plan => service_plan)
-          expect(subject).to eq true
-        end
-      end
-    end
-
-    describe "#service_plan_quota_remaining?" do
-      let(:org) do
-        Organization.make :quota_definition => quota
-      end
-
-      let(:trial_db_guid) { ServicePlan.trial_db_guid }
-
-      let!(:space) do
-        Space.make(:organization => org)
-      end
-
-      subject { org.check_quota?(service_plan) }
-
-      context "when the service plan requested is the trial db" do
-        let(:service_plan) do
-            ServicePlan.find(:unique_id => trial_db_guid) ||
-              ServicePlan.make(:unique_id => trial_db_guid)
-        end
-
-        context "and the org's quota definition is paid" do
-          context "and the number of total instances does not exceed the quota restriction" do
-            let(:quota) do
-              QuotaDefinition.make(:total_services => 1)
-            end
-
-            it "return an empty hash" do
-              expect(subject).to be_empty
-            end
-          end
-
-          context "and the number of total instances exceeds than the quota restriction" do
-            let(:quota) do
-              QuotaDefinition.make(:total_services => 0)
-            end
-
-            it "returns a :paid_quota_exceeded error on the org" do
-              expect(subject).to eq({:type => :org, :name => :paid_quota_exceeded })
-            end
-          end
-
-        end
-
-        context "and the org's quota definition is unpaid" do
-          let(:quota) do
-            QuotaDefinition.make(:non_basic_services_allowed => false)
-          end
-
-          it "returns a :paid_services_not_allowed error on the service plan" do
-            expect(subject).to eq({:type => :service_plan, :name => :paid_services_not_allowed })
-          end
-        end
-
-        context "and the org's quota definition is trial" do
-          let(:quota) do
-            QuotaDefinition.find(:non_basic_services_allowed => false, :trial_db_allowed => true)
-          end
-
-          it "returns no error if the org has not allocated a trial db" do
-            expect(subject).to be_empty
-          end
-
-          it "returns a :trial_quota_exceeded error if the org has allocated a trial db" do
-            Organization.any_instance.stub(:trial_db_allocated?).and_return(true)
-            expect(subject).to eq({ :type => :org, :name => :trial_quota_exceeded })
-          end
-
-        end
-      end
-
-      context "when the service plan requested is not trial db" do
-        context "and the service plan is free" do
-          let(:service_plan) { ServicePlan.make :free => true }
-
-          context "and the number of total instances is less than the quota restriction" do
-            let(:quota) { QuotaDefinition.make :total_services => 1 }
-            it "returns no error" do
-              expect(subject).to be_empty
-            end
-          end
-
-          context "and the number of total instances is greater than the quota restriction" do
-            let(:quota) do
-              QuotaDefinition.make(:total_services => 0, :non_basic_services_allowed => false)
-            end
-
-            it "returns :free_quota_exceeded for the org" do
-              expect(subject).to eq({ :type => :org, :name => :free_quota_exceeded })
-            end
-          end
-        end
-
-        context "and the quota is paid" do
-          let(:service_plan) { ServicePlan.make }
-          context "and the number of total instances is less than the quota restriction" do
-            let(:quota) do
-              QuotaDefinition.make(:total_services => 1, :non_basic_services_allowed => true)
-            end
-
-            it "returns no error" do
-              expect(subject).to be_empty
-            end
-          end
-
-          context "and the number of total instances is greater than the quota restriction" do
-            let(:quota) do
-              QuotaDefinition.make(:total_services => 0, :non_basic_services_allowed => true)
-            end
-
-            it "returns :paid_quota_exceeded error for the org" do
-              expect(subject).to eq({ :type => :org, :name => :paid_quota_exceeded })
-            end
-          end
-        end
-
-        context "and the quota is unpaid and the service plan is not free" do
-          let(:quota) do
-            QuotaDefinition.make(:total_services => 1, :non_basic_services_allowed => false)
-          end
-          let(:service_plan) { ServicePlan.make :free => false }
-          it "returns a :paid_services_not_allowed error for the service plan" do
-            expect(subject).to eq({ :type => :service_plan, :name => :paid_services_not_allowed })
-          end
-        end
       end
     end
 

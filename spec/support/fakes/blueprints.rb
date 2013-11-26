@@ -18,7 +18,7 @@ Sham.define do
   uaa_id              { |index| "uaa-id-#{index}" }
   domain              { |index| "domain-#{index}.com" }
   host                { |index| "host-#{index}" }
-  guid                { |index| "guid-#{SecureRandom.uuid}" }
+  guid                { |_| "guid-#{SecureRandom.uuid}" }
   extra               { |index| "extra-#{index}"}
   instance_index      { |index| index }
   unique_id           { |index| "unique-id-#{index}" }
@@ -110,6 +110,7 @@ module VCAP::CloudController
   UserProvidedServiceInstance.blueprint do
     name              { Sham.name }
     credentials       { Sham.service_credentials }
+    syslog_drain_url  { Sham.url }
     space             { Space.make }
     is_gateway_service { false }
   end
@@ -131,6 +132,7 @@ module VCAP::CloudController
     credentials       { Sham.service_credentials }
     service_instance  { ManagedServiceInstance.make }
     app               { AppFactory.make(:space => service_instance.space) }
+    syslog_drain_url  { nil }
   end
 
   ServiceBroker.blueprint do
@@ -234,7 +236,8 @@ module VCAP::CloudController
     name { Sham.name }
     non_basic_services_allowed { true }
     total_services { 60 }
-    memory_limit { 20480 } # 20 GB
+    total_routes { 1_000 }
+    memory_limit { 20_480 } # 20 GB
     trial_db_allowed { false }
   end
 

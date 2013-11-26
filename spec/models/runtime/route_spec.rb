@@ -3,51 +3,43 @@ require "spec_helper"
 module VCAP::CloudController
   describe VCAP::CloudController::Route, type: :model do
     it_behaves_like "a CloudController model", {
-      :required_attributes  => [:domain, :space, :host],
-      :db_required_attributes => [:domain_id, :space_id],
-      :unique_attributes    => [ [:host, :domain] ],
-      :custom_attributes_for_uniqueness_tests => -> do
-        space = Space.make
-        domain = Domain.make(
-          :owning_organization => space.organization,
-          :wildcard => true
-        )
-        space.add_domain(domain)
-        { space: space, domain: domain }
-      end,
-      :create_attribute => lambda { |name, route|
-        case name.to_sym
-        when :space
-          route.space
-        when :domain
-          d = Domain.make(
-            :owning_organization => route.space.organization,
-            :wildcard => true
-          )
-          route.space.add_domain(d)
-          d
-        when :host
-          Sham.host
-        end
-      },
-      :create_attribute_reset => lambda { @space = nil },
-      :many_to_one => {
-        :domain => {
-          :delete_ok => true,
-          :create_for => lambda { |route|
-            d = Domain.make(
-              :owning_organization => route.domain.owning_organization,
-              :wildcard => true
-            )
-            route.space.add_domain(d)
-          }
+        required_attributes: [:domain, :space, :host],
+        db_required_attributes: [:domain_id, :space_id],
+        unique_attributes: [[:host, :domain]],
+        custom_attributes_for_uniqueness_tests: -> do
+          space = Space.make
+          domain = Domain.make(owning_organization: space.organization, wildcard: true)
+          space.add_domain(domain)
+          {space: space, domain: domain}
+        end,
+        create_attribute: ->(name, route) {
+          case name.to_sym
+            when :space
+              route.space
+            when :domain
+              d = Domain.make(owning_organization: route.space.organization, wildcard: true)
+              route.space.add_domain(d)
+              d
+            when :host
+              Sham.host
+          end
+        },
+        create_attribute_reset: -> { @space = nil },
+        many_to_one: {
+            domain: {
+                delete_ok: true,
+                create_for: ->(route) {
+                  d = Domain.make(
+                      owning_organization: route.domain.owning_organization,
+                      wildcard: true
+                  )
+                  route.space.add_domain(d)
+                }
+            }
+        },
+        many_to_zero_or_more: {
+            apps: ->(route) { AppFactory.make(:space => route.space) }
         }
-      },
-      :many_to_zero_or_more => {
-        :apps => lambda { |route|
-          AppFactory.make(:space => route.space)
-        }
-      }
     }
 
     describe "validations" do
@@ -137,6 +129,50 @@ module VCAP::CloudController
                                  :domain => domain,
                                  :host => " ")
             }.to raise_error(Sequel::ValidationFailed)
+          end
+        end
+      end
+
+      describe "total allowed routes" do
+        let(:space) { Space.make }
+        let(:quota_definition) { space.organization.quota_definition }
+
+        subject(:route) { Route.new(space: space) }
+
+        context "on create" do
+          context "when there is less than the total allowed routes" do
+            before do
+              quota_definition.total_routes = 10
+              quota_definition.save
+            end
+
+            it "has the error on organization" do
+              subject.valid?
+              expect(subject.errors.on(:organization)).to be_nil
+            end
+          end
+
+          context "when there is more than the total allowed routes" do
+            before do
+              quota_definition.total_routes = 0
+              quota_definition.save
+            end
+
+            it "has the error on organization" do
+              subject.valid?
+              expect(subject.errors.on(:organization)).to include :total_routes_exceeded
+            end
+          end
+        end
+
+        context "on update" do
+          it "should not validate the total routes limit if already existing" do
+            expect {
+              quota_definition.total_routes = 0
+              quota_definition.save
+            }.not_to change {
+              subject.valid?
+            }
           end
         end
       end
