@@ -170,6 +170,8 @@ module VCAP::CloudController
           dea_pool.reserve_app_memory(dea_id, app.memory)
           stager_pool.reserve_app_memory(dea_id, app.memory)
         else
+          message.delete(:services)
+          message.delete(:executableUri)
           logger.error "dea-client.no-resources-available", message: message
         end
       end
