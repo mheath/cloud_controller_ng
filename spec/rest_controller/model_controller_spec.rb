@@ -36,7 +36,11 @@ module VCAP::CloudController
       end
     end
 
-    subject(:controller) { controller_class.new({}, logger, env, params, request_body) }
+    subject(:controller) { controller_class.new({}, logger, env, params, request_body, sinatra, dependencies) }
+    let(:sinatra) { double('sinatra') }
+    let(:dependencies) { {object_renderer: object_renderer, collection_renderer: collection_renderer} }
+    let(:object_renderer) { double('object_renderer', render_json: nil) }
+    let(:collection_renderer) { double('collection_renderer', render_json: nil) }
 
     def define_model_class(class_name, table_name)
       stub_const("VCAP::Errors::#{class_name}NotFound", Errors::AppPackageNotFound)
@@ -107,19 +111,19 @@ module VCAP::CloudController
 
         expect(result[0]).to eq(201)
         expect(result[1]).to eq({"Location" => url})
-
-        parsed_json = JSON.parse(result[2])
-        expect(parsed_json.keys).to match_array(%w(metadata entity))
       end
 
       it "should call the serialization instance asssociated with controller to generate response data" do
-        serializer = double
-        controller.should_receive(:serialization).and_return(serializer)
-        serializer.should_receive(:render_json).with(controller_class, instance_of(model_klass), {}).and_return("serialized json")
+        object_renderer.
+          should_receive(:render_json).
+          with(controller_class, instance_of(model_klass), {}).
+          and_return("serialized json")
 
         result = controller.create
         expect(result[2]).to eq("serialized json")
       end
+
+
     end
 
     describe "#read" do
@@ -136,9 +140,10 @@ module VCAP::CloudController
         end
 
         it "returns the serialized object if access is validated" do
-          serializer = double
-          controller.should_receive(:serialization).and_return(serializer)
-          serializer.should_receive(:render_json).with(controller_class, model, {}).and_return("serialized json")
+          object_renderer.
+            should_receive(:render_json).
+            with(controller_class, model, {}).
+            and_return("serialized json")
 
           expect(controller.read(model.guid)).to eq("serialized json")
         end
@@ -179,9 +184,10 @@ module VCAP::CloudController
         end
 
         it "returns the serialized updated object if access is validated" do
-          serializer = double
-          controller.should_receive(:serialization).and_return(serializer)
-          serializer.should_receive(:render_json).with(controller_class, instance_of(model_klass), {}).and_return("serialized json")
+          object_renderer.
+            should_receive(:render_json).
+            with(controller_class, instance_of(model_klass), {}).
+            and_return("serialized json")
 
           result = controller.update(model.guid)
           expect(result[0]).to eq(201)
@@ -263,7 +269,7 @@ module VCAP::CloudController
         context "when deleting with recursive set to true" do
           let(:run_delayed_job) { Delayed::Worker.new.work_off if Delayed::Job.last }
 
-          subject(:controller) { controller_class.new({}, logger, env, params.merge("recursive" => "true"), request_body) }
+          before { params.merge!("recursive" => "true") }
 
           it "successfully deletes" do
             expect {
@@ -326,25 +332,35 @@ module VCAP::CloudController
       context "when async" do
         let(:params) { {"async" => "true"} }
 
-        it "enqueues a job to delete the object" do
-          expect {
+        context "and using the job enqueuer" do
+          let(:job) { double(Jobs::Runtime::ModelDeletion) }
+          let(:enqueuer) { double(Jobs::Enqueuer) }
+          let(:presenter) { double(JobPresenter) }
+
+          before do
+            allow(Jobs::Runtime::ModelDeletion).to receive(:new).with(model_klass, model.guid).and_return(job)
+            allow(Jobs::Enqueuer).to receive(:new).with(job, queue: "cc-generic").and_return(enqueuer)
+            allow(enqueuer).to receive(:enqueue)
+
+            allow(JobPresenter).to receive(:new).and_return(presenter)
+            allow(presenter).to receive(:to_json)
+          end
+
+          it "enqueues a job to delete the object" do
             expect { controller.do_delete(model) }.to_not change { model_klass.count }
-          }.to change {
-            Delayed::Job.count
-          }.by(1)
 
-          job = Delayed::Job.last
-          expect(job.queue).to eq "cc-generic"
-          expect(job.payload_object).to be_a Jobs::Runtime::ModelDeletion
-          expect(job.payload_object.model_class).to eq model_klass
-          expect(job.payload_object.guid).to eq model.guid
-        end
+            expect(Jobs::Runtime::ModelDeletion).to have_received(:new).with(model_klass, model.guid)
+            expect(Jobs::Enqueuer).to have_received(:new).with(job, queue: "cc-generic")
+            expect(enqueuer).to have_received(:enqueue)
+          end
 
-        it "returns a 202 with the job information" do
-          http_code, body = controller.do_delete(model)
+          it "returns a 202 with the job information" do
+            http_code, body = controller.do_delete(model)
 
-          expect(http_code).to eq(202)
-          expect(body).to include('"status": "queued"')
+            expect(http_code).to eq(202)
+            expect(JobPresenter).to have_received(:new)
+            expect(presenter).to have_received(:to_json)
+          end
         end
 
         context "when the model has active associations" do
@@ -368,7 +384,7 @@ module VCAP::CloudController
 
         controller_class.stub(path: fake_class_path)
 
-        RestController::Paginator.should_receive(:render_json).with(
+        collection_renderer.should_receive(:render_json).with(
           controller_class,
           filtered_dataset,
           fake_class_path,

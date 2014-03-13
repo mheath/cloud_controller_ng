@@ -7,7 +7,7 @@ module VCAP::CloudController
   class Config < VCAP::Config
     define_schema do
       {
-        :port => Integer,
+        :external_port => Integer,
         :info => {
           :name            => String,
           :build           => String,
@@ -25,6 +25,7 @@ module VCAP::CloudController
         :app_usage_events => {
           :cutoff_age_in_days => Fixnum
         },
+        optional(:billing_event_writing_enabled) => bool,
         :default_app_memory => Fixnum,
         optional(:maximum_app_disk_in_mb) => Fixnum,
         :maximum_health_check_timeout => Fixnum,
@@ -139,7 +140,21 @@ module VCAP::CloudController
         optional(:varz_user) => String,
         optional(:varz_password) => String,
         optional(:disable_custom_buildpacks) => bool,
-        optional(:broker_client_timeout_seconds) => Integer
+        optional(:broker_client_timeout_seconds) => Integer,
+        optional(:uaa_client_name) => String,
+        optional(:uaa_client_secret) => String,
+
+        :renderer => {
+          :max_results_per_page => Integer,
+          :default_results_per_page => Integer,
+        },
+
+        optional(:loggregator) => {
+          optional(:router) => String,
+          optional(:shared_secret) => String,
+        },
+
+        optional(:request_timeout_in_seconds) => Integer,
       }
     end
 
@@ -195,11 +210,12 @@ module VCAP::CloudController
         @initialized = true
       end
 
-      private
       def merge_defaults(config)
         config[:stacks_file] ||= File.join(config_dir, "stacks.yml")
-        config[:directories] ||= {}
         config[:maximum_app_disk_in_mb] ||= 2048
+        config[:request_timeout_in_seconds] ||= 300
+        config[:directories] ||= {}
+        config[:billing_event_writing_enabled] = true if config[:billing_event_writing_enabled].nil?
         config
       end
     end

@@ -1,5 +1,5 @@
 require "cloudfront-signer"
-require "cloud_controller/blobstore/blobstore"
+require "cloud_controller/blobstore/client"
 
 module VCAP::CloudController
   class StagingsController < RestController::Base
@@ -57,7 +57,7 @@ module VCAP::CloudController
       droplet_upload_job = Jobs::Runtime::DropletUpload.new(upload_path, app.id)
 
       if async?
-        job = Delayed::Job.enqueue(droplet_upload_job, queue: LocalQueue.new(config))
+        job = Jobs::Enqueuer.new(droplet_upload_job, queue: LocalQueue.new(config)).enqueue()
         external_domain = Array(config[:external_domain]).first
         [HTTP::OK, JobPresenter.new(job, "https://#{external_domain}").to_json]
       else
@@ -84,7 +84,7 @@ module VCAP::CloudController
       raise StagingError.new("malformed buildpack cache upload request for #{app.guid}") unless upload_path
 
       blobstore_upload = Jobs::Runtime::BlobstoreUpload.new(upload_path, app.guid, :buildpack_cache_blobstore)
-      Delayed::Job.enqueue(blobstore_upload, queue: LocalQueue.new(config))
+      Jobs::Enqueuer.new(blobstore_upload, queue: LocalQueue.new(config)).enqueue()
       HTTP::OK
     end
 
@@ -106,6 +106,7 @@ module VCAP::CloudController
     private
 
     def inject_dependencies(dependencies)
+      super
       @blobstore = dependencies.fetch(:droplet_blobstore)
       @buildpack_cache_blobstore = dependencies.fetch(:buildpack_cache_blobstore)
       @package_blobstore = dependencies.fetch(:package_blobstore)

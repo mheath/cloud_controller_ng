@@ -37,7 +37,7 @@ describe CloudController::DependencyLocator do
       let(:cdn_settings) { nil }
 
       it "creates blob stores without the CDN" do
-        Blobstore.should_receive(:new).with('fog_connection', 'key', nil)
+        CloudController::Blobstore::Client.should_receive(:new).with('fog_connection', 'key', nil)
         locator.droplet_blobstore
       end
     end
@@ -48,8 +48,8 @@ describe CloudController::DependencyLocator do
       let(:cdn) { double(:cdn) }
 
       it "creates the blob stores with CDNs if configured" do
-        Cdn.should_receive(:new).with(cdn_host).and_return(cdn)
-        Blobstore.should_receive(:new).with('fog_connection', 'key', cdn)
+        CloudController::Blobstore::Cdn.should_receive(:new).with(cdn_host).and_return(cdn)
+        CloudController::Blobstore::Client.should_receive(:new).with('fog_connection', 'key', cdn)
         locator.droplet_blobstore
       end
     end
@@ -70,7 +70,7 @@ describe CloudController::DependencyLocator do
       let(:cdn_settings) { nil }
 
       it "creates blob stores without the CDN" do
-        Blobstore.should_receive(:new).with('fog_connection', 'key', nil, "buildpack_cache")
+        CloudController::Blobstore::Client.should_receive(:new).with('fog_connection', 'key', nil, "buildpack_cache")
         locator.buildpack_cache_blobstore
       end
     end
@@ -81,8 +81,8 @@ describe CloudController::DependencyLocator do
       let(:cdn) { double(:cdn) }
 
       it "creates the blob stores with CDNs if configured" do
-        Cdn.should_receive(:new).with(cdn_host).and_return(cdn)
-        Blobstore.should_receive(:new).with('fog_connection', 'key', cdn, "buildpack_cache")
+        CloudController::Blobstore::Cdn.should_receive(:new).with(cdn_host).and_return(cdn)
+        CloudController::Blobstore::Client.should_receive(:new).with('fog_connection', 'key', cdn, "buildpack_cache")
         locator.buildpack_cache_blobstore
       end
     end
@@ -103,7 +103,7 @@ describe CloudController::DependencyLocator do
       let(:cdn_settings) { nil }
 
       it "creates blob stores without the CDN" do
-        Blobstore.should_receive(:new).with('fog_connection', 'key', nil)
+        CloudController::Blobstore::Client.should_receive(:new).with('fog_connection', 'key', nil)
         locator.package_blobstore
       end
     end
@@ -114,8 +114,8 @@ describe CloudController::DependencyLocator do
       let(:cdn) { double(:cdn) }
 
       it "creates the blob stores with CDNs if configured" do
-        Cdn.should_receive(:new).with(cdn_host).and_return(cdn)
-        Blobstore.should_receive(:new).with('fog_connection', 'key', cdn)
+        CloudController::Blobstore::Cdn.should_receive(:new).with(cdn_host).and_return(cdn)
+        CloudController::Blobstore::Client.should_receive(:new).with('fog_connection', 'key', cdn)
         locator.package_blobstore
       end
     end
@@ -136,7 +136,7 @@ describe CloudController::DependencyLocator do
       let(:cdn_settings) { nil }
 
       it "creates blob stores without the CDN" do
-        Blobstore.should_receive(:new).with('fog_connection', 'key', nil)
+        CloudController::Blobstore::Client.should_receive(:new).with('fog_connection', 'key', nil)
         locator.global_app_bits_cache
       end
     end
@@ -147,8 +147,8 @@ describe CloudController::DependencyLocator do
       let(:cdn) { double(:cdn) }
 
       it "creates the blob stores with CDNs if configured" do
-        Cdn.should_receive(:new).with(cdn_host).and_return(cdn)
-        Blobstore.should_receive(:new).with('fog_connection', 'key', cdn)
+        CloudController::Blobstore::Cdn.should_receive(:new).with(cdn_host).and_return(cdn)
+        CloudController::Blobstore::Client.should_receive(:new).with('fog_connection', 'key', cdn)
         locator.global_app_bits_cache
       end
     end
@@ -157,8 +157,8 @@ describe CloudController::DependencyLocator do
   describe "#blobstore_url_generator" do
     let(:my_config) do
       {
-        bind_address: "bind.address",
-        port: 8282,
+        external_host: "external.host",
+        external_port: 8282,
         staging: {
           auth: {
             user: "username",
@@ -174,17 +174,17 @@ describe CloudController::DependencyLocator do
 
     it "creates blobstore_url_generator with the host, port, and blobstores" do
       connection_options = {
-        blobstore_host: "bind.address",
+        blobstore_host: "external.host",
         blobstore_port: 8282,
         user: "username",
         password: "password"
       }
-      CloudController::BlobstoreUrlGenerator.should_receive(:new).
+      CloudController::Blobstore::UrlGenerator.should_receive(:new).
         with(hash_including(connection_options),
-             instance_of(Blobstore),
-             instance_of(Blobstore),
-             instance_of(Blobstore),
-             instance_of(Blobstore)
+             instance_of(CloudController::Blobstore::Client),
+             instance_of(CloudController::Blobstore::Client),
+             instance_of(CloudController::Blobstore::Client),
+             instance_of(CloudController::Blobstore::Client)
       )
       locator.blobstore_url_generator
     end
@@ -204,5 +204,67 @@ describe CloudController::DependencyLocator do
     subject { locator.space_event_repository }
 
     it { should be_a(VCAP::CloudController::Repositories::Runtime::SpaceEventRepository) }
+  end
+
+  describe "#object_renderer" do
+    it "returns paginated collection renderer configured via config" do
+      eager_loader = instance_of(VCAP::CloudController::RestController::SecureEagerLoader)
+      serializer = instance_of(VCAP::CloudController::RestController::PreloadedObjectSerializer)
+      opts = {max_inline_relations_depth: 100_002}
+
+      config_override(renderer: opts)
+
+      renderer = double('renderer')
+      VCAP::CloudController::RestController::ObjectRenderer.
+        should_receive(:new).
+        with(eager_loader, serializer, opts).
+        and_return(renderer)
+
+      expect(locator.object_renderer).to eq(renderer)
+    end
+  end
+
+  describe "#paginated_collection_renderer" do
+    it "returns paginated collection renderer configured via config" do
+      eager_loader = instance_of(VCAP::CloudController::RestController::SecureEagerLoader)
+      serializer = instance_of(VCAP::CloudController::RestController::PreloadedObjectSerializer)
+      opts = {
+        max_results_per_page: 100_000,
+        default_results_per_page: 100_001,
+        max_inline_relations_depth: 100_002,
+      }
+
+      config_override(renderer: opts)
+
+      renderer = double('renderer')
+      VCAP::CloudController::RestController::PaginatedCollectionRenderer.
+        should_receive(:new).
+        with(eager_loader, serializer, opts).
+        and_return(renderer)
+
+      expect(locator.paginated_collection_renderer).to eq(renderer)
+    end
+  end
+
+  describe "#entity_only_paginated_collection_renderer" do
+    it "returns paginated collection renderer configured via config" do
+      eager_loader = instance_of(VCAP::CloudController::RestController::SecureEagerLoader)
+      serializer = instance_of(VCAP::CloudController::RestController::EntityOnlyPreloadedObjectSerializer)
+      opts = {
+        max_results_per_page: 100_000,
+        default_results_per_page: 100_001,
+        max_inline_relations_depth: 100_002,
+      }
+
+      config_override(renderer: opts)
+
+      renderer = double('renderer')
+      VCAP::CloudController::RestController::PaginatedCollectionRenderer.
+        should_receive(:new).
+        with(eager_loader, serializer, opts).
+        and_return(renderer)
+
+      expect(locator.entity_only_paginated_collection_renderer).to eq(renderer)
+    end
   end
 end

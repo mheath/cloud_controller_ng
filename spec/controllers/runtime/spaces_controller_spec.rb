@@ -26,19 +26,8 @@ module VCAP::CloudController
     include_examples "collection operations", path: "/v2/spaces", model: Space,
       one_to_many_collection_ids: {
         apps: lambda { |space| AppFactory.make(space: space) },
-        service_instances: lambda { |space| ManagedServiceInstance.make(space: space) }
-      },
-      one_to_many_collection_ids_without_url: {
         routes: lambda { |space| Route.make(space: space) },
-        default_users: lambda { |space|
-          user = VCAP::CloudController::User.make
-          space.organization.add_user(user)
-          space.add_developer(user)
-          space.save
-          user.default_space = space
-          user.save
-          user
-        }
+        service_instances: lambda { |space| ManagedServiceInstance.make(space: space) }
       },
       many_to_one_collection_ids: {},
       many_to_many_collection_ids: {
@@ -460,6 +449,7 @@ module VCAP::CloudController
           service_plans = service.fetch('entity').fetch('service_plans')
           service_plans.length.should == 1
           service_plans.first.fetch('metadata').fetch('guid').should == @service_plan.guid
+          service_plans.first.fetch('metadata').fetch('url').should == "/v2/service_plans/#{@service_plan.guid}"
         end
 
         it 'should exclude plans that are not visible to the org' do
@@ -589,6 +579,45 @@ module VCAP::CloudController
           get "/v2/spaces/#{space_one.guid}/domains/#{domain.guid}"
           expect(last_response).to be_a_deprecated_response
         end
+      end
+    end
+
+    describe 'GET', '/v2/spaces?inline-relations-depth=3', regression: true do
+      let(:space) { Space.make }
+
+      it 'returns managed service instances associated with service plans' do
+        managed_service_instance = ManagedServiceInstance.make(space: space)
+        ServiceBinding.make(service_instance: managed_service_instance)
+
+        get "/v2/spaces/#{space.guid}?inline-relations-depth=3", {}, admin_headers
+        expect(last_response.status).to eql(200)
+        service_instance_hashes = decoded_response["entity"]["service_instances"]
+
+        managed_service_instance_hash =
+          find_service_instance_with_guid(service_instance_hashes, managed_service_instance.guid)
+        expect(managed_service_instance_hash["entity"]["service_plan_url"]).to be
+        expect(managed_service_instance_hash["entity"]["service_plan_guid"]).to be
+        expect(managed_service_instance_hash["entity"]["service_plan"]).to be
+      end
+
+      it 'returns provided service instances without plans' do
+        user_provided_service_instance = UserProvidedServiceInstance.make(space: space)
+        ServiceBinding.make(service_instance: user_provided_service_instance)
+
+        get "/v2/spaces/#{space.guid}?inline-relations-depth=3", {}, admin_headers
+        expect(last_response.status).to eql(200)
+        service_instance_hashes = decoded_response["entity"]["service_instances"]
+
+        user_provided_service_instance_hash =
+          find_service_instance_with_guid(service_instance_hashes, user_provided_service_instance.guid)
+        expect(user_provided_service_instance_hash["entity"]).to_not have_key("service_plan_url")
+        expect(user_provided_service_instance_hash["entity"]).to_not have_key("service_plan_guid")
+        expect(user_provided_service_instance_hash["entity"]).to_not have_key("service_plan")
+      end
+
+      def find_service_instance_with_guid(service_instances, guid)
+        service_instances.detect { |res| res["metadata"]["guid"] == guid } ||
+          raise("Failed to find service instance with #{guid}")
       end
     end
   end

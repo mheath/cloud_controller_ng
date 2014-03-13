@@ -1,5 +1,7 @@
 require "repositories/runtime/app_event_repository"
 require "repositories/runtime/space_event_repository"
+require "cloud_controller/rest_controller/object_renderer"
+require "cloud_controller/rest_controller/paginated_collection_renderer"
 
 module CloudController
   class DependencyLocator
@@ -26,9 +28,9 @@ module CloudController
     def droplet_blobstore
       droplets = config.fetch(:droplets)
       cdn_uri = droplets.fetch(:cdn, nil) && droplets.fetch(:cdn).fetch(:uri, nil)
-      droplet_cdn = Cdn.make(cdn_uri)
+      droplet_cdn = CloudController::Blobstore::Cdn.make(cdn_uri)
 
-      Blobstore.new(
+      Blobstore::Client.new(
         droplets.fetch(:fog_connection),
         droplets.fetch(:droplet_directory_key),
         droplet_cdn
@@ -38,9 +40,9 @@ module CloudController
     def buildpack_cache_blobstore
       droplets = config.fetch(:droplets)
       cdn_uri = droplets.fetch(:cdn, nil) && droplets.fetch(:cdn).fetch(:uri, nil)
-      droplet_cdn = Cdn.make(cdn_uri)
+      droplet_cdn = CloudController::Blobstore::Cdn.make(cdn_uri)
 
-      Blobstore.new(
+      Blobstore::Client.new(
         droplets.fetch(:fog_connection),
         droplets.fetch(:droplet_directory_key),
         droplet_cdn,
@@ -51,9 +53,9 @@ module CloudController
     def package_blobstore
       packages = config.fetch(:packages)
       cdn_uri = packages.fetch(:cdn, nil) && packages.fetch(:cdn).fetch(:uri, nil)
-      package_cdn = Cdn.make(cdn_uri)
+      package_cdn = CloudController::Blobstore::Cdn.make(cdn_uri)
 
-      Blobstore.new(
+      Blobstore::Client.new(
         packages.fetch(:fog_connection),
         packages.fetch(:app_package_directory_key),
         package_cdn
@@ -63,9 +65,9 @@ module CloudController
     def global_app_bits_cache
       resource_pool = config.fetch(:resource_pool)
       cdn_uri = resource_pool.fetch(:cdn, nil) && resource_pool.fetch(:cdn).fetch(:uri, nil)
-      app_bit_cdn = Cdn.make(cdn_uri)
+      app_bit_cdn = CloudController::Blobstore::Cdn.make(cdn_uri)
 
-      Blobstore.new(
+      Blobstore::Client.new(
         resource_pool.fetch(:fog_connection),
         resource_pool.fetch(:resource_directory_key),
         app_bit_cdn
@@ -73,7 +75,7 @@ module CloudController
     end
 
     def buildpack_blobstore
-      Blobstore.new(
+      Blobstore::Client.new(
         config[:buildpacks][:fog_connection],
         config[:buildpacks][:buildpack_directory_key] || "cc-buildpacks"
       )
@@ -85,12 +87,12 @@ module CloudController
 
     def blobstore_url_generator
       connection_options = {
-        blobstore_host: config[:bind_address],
-        blobstore_port: config[:port],
+        blobstore_host: config[:external_host],
+        blobstore_port: config[:external_port],
         user: config[:staging][:auth][:user],
         password: config[:staging][:auth][:password]
       }
-      BlobstoreUrlGenerator.new(
+      Blobstore::UrlGenerator.new(
         connection_options,
         package_blobstore,
         buildpack_cache_blobstore,
@@ -105,6 +107,37 @@ module CloudController
 
     def space_event_repository
       Repositories::Runtime::SpaceEventRepository.new
+    end
+
+    def object_renderer
+      eager_loader = VCAP::CloudController::RestController::SecureEagerLoader.new
+      serializer   = VCAP::CloudController::RestController::PreloadedObjectSerializer.new
+
+      VCAP::CloudController::RestController::ObjectRenderer.new(eager_loader, serializer, {
+        max_inline_relations_depth: config[:renderer][:max_inline_relations_depth],
+      })
+    end
+
+    def paginated_collection_renderer
+      eager_loader = VCAP::CloudController::RestController::SecureEagerLoader.new
+      serializer   = VCAP::CloudController::RestController::PreloadedObjectSerializer.new
+
+      VCAP::CloudController::RestController::PaginatedCollectionRenderer.new(eager_loader, serializer, {
+        max_results_per_page:       config[:renderer][:max_results_per_page],
+        default_results_per_page:   config[:renderer][:default_results_per_page],
+        max_inline_relations_depth: config[:renderer][:max_inline_relations_depth],
+      })
+    end
+
+    def entity_only_paginated_collection_renderer
+      eager_loader = VCAP::CloudController::RestController::SecureEagerLoader.new
+      serializer   = VCAP::CloudController::RestController::EntityOnlyPreloadedObjectSerializer.new
+
+      VCAP::CloudController::RestController::PaginatedCollectionRenderer.new(eager_loader, serializer, {
+        max_results_per_page:       config[:renderer][:max_results_per_page],
+        default_results_per_page:   config[:renderer][:default_results_per_page],
+        max_inline_relations_depth: config[:renderer][:max_inline_relations_depth],
+      })
     end
 
     private

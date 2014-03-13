@@ -5,6 +5,12 @@ module VCAP::CloudController::RestController
     include Routes
     include ::Allowy::Context
 
+    def inject_dependencies(dependencies)
+      super
+      @object_renderer = dependencies.fetch(:object_renderer)
+      @collection_renderer = dependencies.fetch(:collection_renderer)
+    end
+
     # Create operation
     def create
       json_msg = self.class::CreateMessage.decode(body)
@@ -28,7 +34,7 @@ module VCAP::CloudController::RestController
       [
         HTTP::CREATED,
         {"Location" => "#{self.class.path}/#{obj.guid}"},
-        serialization.render_json(self.class, obj, @opts)
+        object_renderer.render_json(self.class, obj, @opts)
       ]
     end
 
@@ -38,7 +44,7 @@ module VCAP::CloudController::RestController
     def read(guid)
       logger.debug "cc.read", model: self.class.model_class_name, guid: guid
       obj = find_guid_and_validate_access(:read, guid)
-      serialization.render_json(self.class, obj, @opts)
+      object_renderer.render_json(self.class, obj, @opts)
     end
 
     # Update operation
@@ -56,7 +62,7 @@ module VCAP::CloudController::RestController
 
       after_update(obj)
 
-      [HTTP::CREATED, serialization.render_json(self.class, obj, @opts)]
+      [HTTP::CREATED, object_renderer.render_json(self.class, obj, @opts)]
     end
 
     def find_for_update(guid)
@@ -77,7 +83,7 @@ module VCAP::CloudController::RestController
       model_deletion_job = Jobs::Runtime::ModelDeletion.new(obj.class, obj.guid)
 
       if async?
-        job = Delayed::Job.enqueue(model_deletion_job, queue: "cc-generic")
+        job = Jobs::Enqueuer.new(model_deletion_job, queue: "cc-generic").enqueue()
         [HTTP::ACCEPTED, JobPresenter.new(job).to_json]
       else
         model_deletion_job.perform
@@ -90,9 +96,13 @@ module VCAP::CloudController::RestController
       raise NotAuthenticated unless user || roles.admin?
       validate_access(:index, model, user, roles)
 
-      Paginator.render_json(
-        self.class, enumerate_dataset, self.class.path,
-        @opts.merge(serialization: serialization), params)
+      collection_renderer.render_json(
+        self.class,
+        enumerate_dataset,
+        self.class.path,
+        @opts,
+        params,
+      )
     end
 
     def get_filtered_dataset_for_enumeration(model, ds, qp, opts)
@@ -126,7 +136,13 @@ module VCAP::CloudController::RestController
           @opts
         )
 
-      Paginator.render_json(associated_controller, filtered_dataset, associated_path, @opts)
+      collection_renderer.render_json(
+        associated_controller,
+        filtered_dataset,
+        associated_path,
+        @opts,
+        {}
+      )
     end
 
     # Add a related object.
@@ -180,7 +196,7 @@ module VCAP::CloudController::RestController
 
       after_update(obj)
 
-      [HTTP::CREATED, serialization.render_json(self.class, obj, @opts)]
+      [HTTP::CREATED, object_renderer.render_json(self.class, obj, @opts)]
     end
 
     # Find an object and validate that the current user has rights to
@@ -230,9 +246,8 @@ module VCAP::CloudController::RestController
       self.class.model
     end
 
-    def serialization
-      self.class.serialization
-    end
+    protected
+    attr_reader :object_renderer, :collection_renderer
 
     private
 
@@ -301,11 +316,6 @@ module VCAP::CloudController::RestController
 
       def guess_model_class_name
         class_basename.sub(/Controller$/, '').singularize
-      end
-
-      def serialization(klass = nil)
-        @serialization = klass if klass
-        @serialization || ObjectSerialization
       end
 
       # Model class name associated with this rest/api endpoint.

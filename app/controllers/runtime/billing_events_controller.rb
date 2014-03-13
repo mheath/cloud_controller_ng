@@ -1,7 +1,5 @@
 module VCAP::CloudController
   class BillingEventsController < RestController::ModelController
-    serialization RestController::EntityOnlyObjectSerialization
-
     # override base enumeration functionality.  This is mainly becase we need
     # better controll over the dataset returned, and we don't have generic
     # functionality for the controller to configure its dataset.
@@ -12,9 +10,10 @@ module VCAP::CloudController
         raise Errors::BillingEventQueryInvalid
       end
 
-      ds = model.user_visible(SecurityContext.current_user, SecurityContext.admin?).filter(timestamp: start_time..end_time)
-      RestController::Paginator.render_json(self.class, ds, self.class.path,
-        @opts.merge(serialization: serialization))
+      ds = model.user_visible(SecurityContext.current_user, SecurityContext.admin?)
+      ds = ds.filter(timestamp: start_time..end_time)
+
+      collection_renderer.render_json(self.class, ds, self.class.path, @opts, {})
     end
 
     def delete(guid)

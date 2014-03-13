@@ -217,11 +217,10 @@ module VCAP::CloudController
         put "/v2/service_plans/#{service_plan.guid}", payload, json_headers(admin_headers)
 
         expect(last_response.status).to be == 400
-        expect(decoded_response).to have_key('backtrace')
         expect(decoded_response.fetch('code')).to eql(110001)
         expect(decoded_response.fetch('error_code')).to eql('CF-ServicePlanInvalid')
         expect(decoded_response.fetch('types')).to eql(['ServicePlanInvalid', 'Error'])
-        expect(decoded_response.fetch('description')).to eql("The service plan is invalid: plan id '#{other_service_plan.unique_id}' is taken")
+        expect(decoded_response.fetch('description')).to eql("The service plan is invalid: Plan ids must be unique")
       end
     end
   end

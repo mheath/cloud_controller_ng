@@ -20,7 +20,7 @@ module VCAP::CloudController
         before do
           config_override({:directories => {:tmpdir => tmpdir}, :packages => config[:packages].merge(:max_droplet_size => max_droplet_size)})
 
-          FingerprintsCollection.stub(:new) { fingerprints }
+          CloudController::Blobstore::FingerprintsCollection.stub(:new) { fingerprints }
           App.stub(:find) { app }
           AppBitsPackage.stub(:new) { double(:packer, create: "done") }
         end
@@ -46,16 +46,8 @@ module VCAP::CloudController
           job.perform
         end
 
-        it "times out if the job takes longer than its timeout" do
-          CloudController::DependencyLocator.stub(:instance) do
-            sleep 2
-          end
-
-          job.stub(:max_run_time).with(:app_bits_packer).and_return( 0.001 )
-
-          expect {
-            job.perform
-          }.to raise_error(Timeout::Error)
+        it "knows its job name" do
+          expect(job.job_name_in_configuration).to equal(:app_bits_packer)
         end
       end
     end

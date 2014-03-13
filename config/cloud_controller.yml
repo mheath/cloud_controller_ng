@@ -1,6 +1,6 @@
 ---
 local_route: 127.0.0.1
-port: 8181
+external_port: 8181
 pid_filename: /tmp/cloud_controller.pid
 message_bus_servers:
   - nats://127.0.0.1:4222
@@ -27,6 +27,8 @@ app_usage_events:
 
 audit_events:
   cutoff_age_in_days: 31
+
+billing_event_writing_enabled: true
 
 default_app_memory: 1024 #mb
 maximum_app_disk_in_mb: 2048
@@ -135,4 +137,12 @@ flapping_crash_count_threshold: 3
 disable_custom_buildpacks: false
 broker_client_timeout_seconds: 60
 
+uaa_client_name: 'cc_service_broker_client'
+uaa_client_secret: 'some-sekret'
+
 diego: false
+
+renderer:
+  max_results_per_page: 100
+  default_results_per_page: 50
+  max_inline_relations_depth: 3

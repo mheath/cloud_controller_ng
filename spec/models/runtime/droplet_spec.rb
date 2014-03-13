@@ -42,10 +42,11 @@ module VCAP::CloudController
       it "destroy drives delete_from_blobstore" do
         app = AppFactory.make
         droplet = app.current_droplet
-        Delayed::Job.should_receive(:enqueue).with(
+        enqueuer = double("Enqueuer", enqueue: true)
+        expect(Jobs::Enqueuer).to receive(:new).with(
           Jobs::Runtime::DropletDeletion.new(droplet.new_blobstore_key, droplet.old_blobstore_key),
           queue: "cc-generic"
-        )
+        ).and_return(enqueuer)
         droplet.destroy
       end
     end

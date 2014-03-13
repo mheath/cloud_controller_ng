@@ -1,4 +1,5 @@
 require "cloud_controller/app_observer"
+require "cloud_controller/database_uri_generator"
 require_relative "buildpack"
 
 module VCAP::CloudController
@@ -82,7 +83,7 @@ module VCAP::CloudController
     # Last staging response which will contain streaming log url
     attr_accessor :last_stager_response
 
-    alias :kill_after_multiple_restarts? :kill_after_multiple_restarts
+    alias_method :kill_after_multiple_restarts?, :kill_after_multiple_restarts
 
     def validate_buildpack_name_or_git_url
       bp = buildpack
@@ -137,8 +138,7 @@ module VCAP::CloudController
 
     def before_save
       if generate_start_event? && !package_hash
-        raise VCAP::Errors::AppPackageInvalid.new(
-          "bits have not been uploaded")
+        raise VCAP::Errors::AppPackageInvalid.new("bits have not been uploaded")
       end
 
       super
@@ -283,6 +283,11 @@ module VCAP::CloudController
 
     def system_env_json
       vcap_services
+    end
+
+    def database_uri
+      service_uris = service_bindings.map {|binding| binding.credentials["uri"]}.compact
+      DatabaseUriGenerator.new(service_uris).database_uri
     end
 
     def validate_environment
@@ -495,7 +500,7 @@ module VCAP::CloudController
 
     private
 
-    WHITELIST_SERVICE_KEYS = %W[name label tags plan credentials].freeze
+    WHITELIST_SERVICE_KEYS = %W[name label tags plan credentials syslog_drain_url].freeze
     def service_binding_json (binding)
       vcap_service = {}
       WHITELIST_SERVICE_KEYS.each do |key|

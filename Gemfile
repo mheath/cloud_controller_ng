@@ -13,7 +13,7 @@ gem 'sequel', '~> 3.48'
 gem 'sinatra', '~> 1.4'
 gem 'sinatra-contrib'
 gem 'yajl-ruby'
-gem 'membrane', '~> 0.0.2'
+gem 'membrane', '~> 0.0.5'
 gem 'httpclient'
 gem 'steno'
 gem 'cloudfront-signer'
@@ -40,6 +40,7 @@ group :operations do
 end
 
 group :test do
+  gem 'rubocop'
   gem 'debugger'
   gem 'rspec'
   gem 'rspec_api_documentation'

@@ -1,5 +1,5 @@
 ---
-port: 8181
+external_port: 8181
 
 info:
   name: "vcap"
@@ -14,26 +14,18 @@ app_domains:
   - customer-app-domain1.com
   - customer-app-domain2.com
 
-jobs:
-  global:
-    timeout_in_seconds: 14400
-
 app_events:
   cutoff_age_in_days: 31
 
 app_usage_events:
   cutoff_age_in_days: 31
 
-audit_events:
-  cutoff_age_in_days: 31
-
 default_app_memory: 1024 #mb
-maximum_app_disk_in_mb: 2048
+maximum_health_check_timeout: 180
 
 uaa:
   url: "http://localhost:8080/uaa"
   resource_id: "cloud_controller"
-  symmetric_secret: "tokensecret"
 
 logging:
   level: fatal # Keep at fatal to avoid lots of extraneous output in tests
@@ -44,9 +36,6 @@ pid_filename: /tmp/cloud_controller.pid
 
 db:
   database: "sqlite:///tmp/cloud_controller.db"
-
-active_record_db:
-  database: "sqlite:///tmp/cloud_controller_ar.db"
 
 bulk_api:
   auth_user: bulk_user
@@ -75,25 +64,25 @@ quota_definitions:
 default_quota_definition: default
 
 resource_pool:
-  resource_directory_key: cc-resources
   fog_connection:
     provider: Local
 
 packages:
-  packages_directory_key: cc-packages
   fog_connection:
     provider: Local
 
 droplets:
-  droplets_directory_key: cc-droplets
   fog_connection:
     provider: Local
 
 db_encryption_key: some-key
 
 hm9000_noop: true
-maximum_health_check_timeout: 180
 
 loggregator:
   router: "127.0.0.1:8080"
   shared_secret: "loggregator-secret"
+
+renderer:
+  max_results_per_page: 100
+  default_results_per_page: 50

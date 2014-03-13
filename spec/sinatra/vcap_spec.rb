@@ -151,16 +151,14 @@ describe 'Sinatra::VCAP' do
     include_examples 'vcap sinatra varz stats', 500
     include_examples 'vcap request id'
     include_examples 'http header content type'
-    it_behaves_like 'a vcap rest error response', /divided by 0/
+    it_behaves_like 'a vcap rest error response'
 
     it 'returns an error structure' do
       decoded_response = Yajl::Parser.parse(last_response.body)
       expect(decoded_response).to eq({
                                        'code' => 10001,
-                                       'error_code' => 'CF-ZeroDivisionError',
-                                       'description' => 'divided by 0',
-                                       'types' => ['ZeroDivisionError'],
-                                       'backtrace' => ['/foo:1', '/bar:2']
+                                       'error_code' => 'UnknownError',
+                                       'description' => 'An unknown error occurred.'
                                      })
     end
   end
@@ -182,7 +180,6 @@ describe 'Sinatra::VCAP' do
       expect(decoded_response['description']).to eq('Request invalid due to parse error: some message')
 
       expect(decoded_response['error_code']).to eq('CF-MessageParseError')
-      expect(decoded_response['backtrace']).to eq(['/vcap:1', '/error:2'])
       expect(decoded_response['types']).to eq(['MessageParseError', 'Error'])
     end
   end
@@ -204,7 +201,6 @@ describe 'Sinatra::VCAP' do
       expect(decoded_response['description']).to eq('boring message')
 
       expect(decoded_response['error_code']).to eq('CF-StructuredErrorWithResponseCode')
-      expect(decoded_response['backtrace']).to eq(['/foo:1', '/bar:2'])
       expect(decoded_response['types']).to eq(['StructuredErrorWithResponseCode'])
 
       # temporarily removed pending security review

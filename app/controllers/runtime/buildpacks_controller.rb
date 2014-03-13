@@ -4,6 +4,7 @@ module VCAP::CloudController
       attribute :name, String
       attribute :position, Integer, default: 0
       attribute :enabled, Message::Boolean, default: true
+      attribute :locked, Message::Boolean, default: false
     end
 
     query_parameters :name
@@ -27,8 +28,7 @@ module VCAP::CloudController
     def update(guid)
       obj = find_for_update(guid)
       model.update(obj, @request_attrs)
-
-      [HTTP::CREATED, serialization.render_json(self.class, obj, @opts)]
+      [HTTP::CREATED, object_renderer.render_json(self.class, obj, @opts)]
     end
 
     private
@@ -38,10 +38,11 @@ module VCAP::CloudController
     def delete_buildpack_in_blobstore(blobstore_key)
       return unless blobstore_key
       blobstore_delete = Jobs::Runtime::BlobstoreDelete.new(blobstore_key, :buildpack_blobstore)
-      Delayed::Job.enqueue(blobstore_delete, queue: "cc-generic")
+      Jobs::Enqueuer.new(blobstore_delete, queue: "cc-generic").enqueue()
     end
 
     def inject_dependencies(dependencies)
+      super
       @buildpack_blobstore = dependencies[:buildpack_blobstore]
     end
 

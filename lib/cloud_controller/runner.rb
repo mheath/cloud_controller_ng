@@ -73,24 +73,20 @@ module VCAP::CloudController
 
     def run!
       EM.run do
-        config = @config.dup
-
-        message_bus = MessageBus::Configurer.new(
-          :servers => config[:message_bus_servers],
-          :logger => logger).go
+        message_bus = MessageBus::Configurer.new(servers: @config[:message_bus_servers], logger: logger).go
 
         start_cloud_controller(message_bus)
 
-        Seeds.write_seed_data(config) if @insert_seed_data
+        Seeds.write_seed_data(@config) if @insert_seed_data
         register_with_collector(message_bus)
 
-        globals = Globals.new(config, message_bus)
+        globals = Globals.new(@config, message_bus)
         globals.setup!
 
         builder = RackAppBuilder.new
-        app = builder.build(config)
+        app = builder.build(@config)
 
-        start_thin_server(app, config)
+        start_thin_server(app)
 
         router_registrar.register_with_router
 
@@ -121,7 +117,7 @@ module VCAP::CloudController
       pg_key = services.keys.select { |svc| svc =~ /postgres/i }.first
       c = services[pg_key].first["credentials"]
       @config[:db][:database] = "postgres://#{c["user"]}:#{c["password"]}@#{c["hostname"]}:#{c["port"]}/#{c["name"]}"
-      @config[:port] = ENV["VCAP_APP_PORT"].to_i
+      @config[:external_port] = ENV["VCAP_APP_PORT"].to_i
     end
 
     private
@@ -134,7 +130,7 @@ module VCAP::CloudController
       Config.configure_components(@config)
       setup_loggregator_emitter
 
-      @config[:bind_address] = VCAP.local_ip(@config[:local_route])
+      @config[:external_host] = VCAP.local_ip(@config[:local_route])
       Config.configure_components_depending_on_message_bus(message_bus)
     end
 
@@ -165,14 +161,11 @@ module VCAP::CloudController
       end
     end
 
-    def start_thin_server(app, config)
+    def start_thin_server(app)
       if @config[:nginx][:use_nginx]
-        @thin_server = Thin::Server.new(
-            config[:nginx][:instance_socket],
-            :signals => false
-        )
+        @thin_server = Thin::Server.new(@config[:nginx][:instance_socket], signals: false)
       else
-        @thin_server = Thin::Server.new(@config[:bind_address], @config[:port])
+        @thin_server = Thin::Server.new(@config[:external_host], @config[:external_port])
       end
 
       @thin_server.app = app
@@ -180,7 +173,7 @@ module VCAP::CloudController
 
       # The routers proxying to us handle killing inactive connections.
       # Set an upper limit just to be safe.
-      @thin_server.timeout = 5.minutes
+      @thin_server.timeout = @config[:request_timeout_in_seconds]
       @thin_server.threaded = true
       @thin_server.start!
     end
@@ -192,8 +185,8 @@ module VCAP::CloudController
     def router_registrar
       @registrar ||= Cf::Registrar.new(
           message_bus_servers: @config[:message_bus_servers],
-          host: @config[:bind_address],
-          port: @config[:port],
+          host: @config[:external_host],
+          port: @config[:external_port],
           uri: @config[:external_domain],
           tags: {:component => "CloudController"},
           index: @config[:index],
@@ -203,7 +196,7 @@ module VCAP::CloudController
     def register_with_collector(message_bus)
       VCAP::Component.register(
           :type => 'CloudController',
-          :host => @config[:bind_address],
+          :host => @config[:external_host],
           :port => @config[:varz_port],
           :user => @config[:varz_user],
           :password => @config[:varz_password],
