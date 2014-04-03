@@ -22,9 +22,9 @@ module VCAP::CloudController
     def self.translate_validation_exception(e, attributes)
       name_errors = e.errors.on([:organization_id, :name])
       if name_errors && name_errors.include?(:unique)
-        Errors::SpaceNameTaken.new(attributes["name"])
+        Errors::ApiError.new_from_details("SpaceNameTaken", attributes["name"])
       else
-        Errors::SpaceInvalid.new(e.errors.full_messages)
+        Errors::ApiError.new_from_details("SpaceInvalid", e.errors.full_messages)
       end
     end
 
@@ -94,17 +94,17 @@ module VCAP::CloudController
 
     def delete(guid)
       space = find_guid_and_validate_access(:delete, guid)
-      @space_event_repository.record_space_delete_request(space, SecurityContext.current_user, recursive?)
+      @space_event_repository.record_space_delete_request(space, SecurityContext.current_user, SecurityContext.current_user_email, recursive?)
       do_delete(space)
     end
 
     private
     def after_create(space)
-      @space_event_repository.record_space_create(space, SecurityContext.current_user, request_attrs)
+      @space_event_repository.record_space_create(space, SecurityContext.current_user, SecurityContext.current_user_email, request_attrs)
     end
 
     def after_update(space)
-      @space_event_repository.record_space_update(space, SecurityContext.current_user, request_attrs)
+      @space_event_repository.record_space_update(space, SecurityContext.current_user, SecurityContext.current_user_email, request_attrs)
     end
 
     module ServiceSerialization

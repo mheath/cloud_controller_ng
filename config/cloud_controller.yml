@@ -39,7 +39,6 @@ info:
   version: 2
   support_address: "http://support.cloudfoundry.com"
   description: "Cloud Foundry sponsored by Pivotal"
-  api_version: "2.0.0"
 
 nginx:
   use_nginx: false
@@ -73,7 +72,7 @@ bulk_api:
 # App staging parameters
 staging:
   # Max duration for staging process
-  max_staging_runtime: 120 # secs
+  timeout_in_seconds: 120 # secs
   minimum_staging_memory_mb: 1024
   auth:
     user: zxsfhgjg
@@ -85,7 +84,6 @@ quota_definitions:
     total_services: 100
     non_basic_services_allowed: true
     total_routes: 1000
-    trial_db_allowed: true
 
 default_quota_definition: default
 
@@ -119,12 +117,7 @@ buildpacks:
 
 db_encryption_key: "asdfasdfasdf"
 
-trial_db:
-  guid: "78ad16cf-3c22-4427-a982-b9d35d746914"
-
 tasks_disabled: false
-
-hm9000_noop: true
 
 varz_port: 7800
 varz_user: varz
@@ -146,3 +139,12 @@ renderer:
   max_results_per_page: 100
   default_results_per_page: 50
   max_inline_relations_depth: 3
+
+install_buildpacks:
+  - name: java_buildpack
+    package: buildpack_java
+  - name: ruby_buildpack
+    package: buildpack_ruby
+  - name: node_buildpack
+    package: buildpack_node
+

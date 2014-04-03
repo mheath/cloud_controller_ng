@@ -25,13 +25,6 @@ module VCAP::CloudController
                      many_to_one_collection_ids: {},
                      many_to_many_collection_ids: {}
 
-    before do
-      Steno.init(Steno::Config.new(
-        :default_log_level => "debug2",
-        :sinks => [Steno::Sink::IO.for_file("/tmp/cloud_controller_test.log")]
-      ))
-    end
-
     describe "Permissions" do
       include_context "permissions"
 
@@ -95,7 +88,7 @@ module VCAP::CloudController
             post "/v2/service_instances", req, json_headers(headers_for(member_a))
 
             last_response.status.should == 403
-            Yajl::Parser.parse(last_response.body)['description'].should == VCAP::CloudController::Errors::NotAuthorized.new.message
+            Yajl::Parser.parse(last_response.body)['description'].should eq("You are not authorized to perform the requested action")
           end
         end
 
@@ -116,7 +109,7 @@ module VCAP::CloudController
               post 'v2/service_instances', payload, json_headers(headers_for(developer))
 
               last_response.status.should == 403
-              Yajl::Parser.parse(last_response.body)['description'].should == VCAP::CloudController::Errors::NotAuthorized.new.message
+              Yajl::Parser.parse(last_response.body)['description'].should eq("You are not authorized to perform the requested action")
             end
           end
 
@@ -157,7 +150,7 @@ module VCAP::CloudController
               post 'v2/service_instances', payload, json_headers(headers_for(developer))
 
               last_response.status.should == 403
-              Yajl::Parser.parse(last_response.body)['description'].should == VCAP::CloudController::Errors::ServiceInstanceOrganizationNotAuthorized.new.message
+              Yajl::Parser.parse(last_response.body)['description'].should match('A service instance for the selected plan cannot be created in this organization.')
             end
           end
         end
@@ -274,7 +267,6 @@ module VCAP::CloudController
         )
 
         ManagedServiceInstance.any_instance.stub(:save).and_raise
-        Controller.any_instance.stub(:in_test_mode?).and_return(false)
 
         post "/v2/service_instances", req, json_headers(headers_for(developer))
 
@@ -283,20 +275,25 @@ module VCAP::CloudController
       end
 
       context 'when the model save and the subsequent deprovision both raise errors' do
-        it 'raises the original error' do
+        let(:save_error_text) { "InvalidRequest" }
+        let(:deprovision_error_text) { "NotAuthorized" }
+
+        before do
+          allow(client).to receive(:deprovision).and_raise(Errors::ApiError.new_from_details(deprovision_error_text))
+          allow_any_instance_of(ManagedServiceInstance).to receive(:save).and_raise(Errors::ApiError.new_from_details(save_error_text))
+        end
+
+        it 'raises the save error' do
           req = Yajl::Encoder.encode(
             :name => 'foo',
             :space_guid => space.guid,
             :service_plan_guid => plan.guid
           )
 
-          client.stub(:deprovision).and_raise(StandardError, 'deprovision')
-          ManagedServiceInstance.any_instance.stub(:save).and_raise(StandardError, 'save')
-          Controller.any_instance.stub(:in_test_mode?).and_return(true)
+          post "/v2/service_instances", req, json_headers(headers_for(developer))
 
-          expect {
-            post "/v2/service_instances", req, json_headers(headers_for(developer))
-          }.to raise_error(StandardError, "save")
+          expect(last_response.body).to_not match(deprovision_error_text)
+          expect(last_response.body).to match(save_error_text)
         end
       end
 
@@ -457,7 +454,22 @@ module VCAP::CloudController
 
     describe 'DELETE', '/v2/service_instances/:service_instance_guid' do
       context 'with a managed service instance' do
-        let!(:service_instance) { ManagedServiceInstance.make }
+        let(:service) { Service.make(:v2) }
+        let(:service_plan) { ServicePlan.make(service: service) }
+        let!(:service_instance) { ManagedServiceInstance.make(service_plan: service_plan) }
+        let(:body) { '{}' }
+        let(:status) { 200 }
+
+        before do
+          guid = service_instance.guid
+          plan_id = service_plan.unique_id
+          service_id = service.unique_id
+          path = "/v2/service_instances/#{guid}?plan_id=#{plan_id}&service_id=#{service_id}"
+          uri = URI(service.service_broker.broker_url + path)
+          uri.user = service.service_broker.auth_username
+          uri.password = service.service_broker.auth_password
+          stub_request(:delete, uri.to_s).to_return(body: body, status: status)
+        end
 
         it "deletes the service instance with the given guid" do
           expect {
@@ -466,6 +478,50 @@ module VCAP::CloudController
           last_response.status.should == 204
           ServiceInstance.find(:guid => service_instance.guid).should be_nil
         end
+
+        context 'when the service broker returns a 409' do
+          let(:body) {'{"description": "service broker error"}' }
+          let(:status) { 409 }
+
+          it 'forwards the error message from the service broker' do
+            delete "/v2/service_instances/#{service_instance.guid}", {}, admin_headers
+
+            expect(last_response.status).to eq 409
+            expect(JSON.parse(last_response.body)['description']).to include 'service broker error'
+          end
+        end
+      end
+
+      context 'with a v1 service instance' do
+        let(:service) { Service.make(:v1) }
+        let(:service_plan) { ServicePlan.make(service: service)}
+        let!(:service_instance) { ManagedServiceInstance.make(service_plan: service_plan) }
+
+        context 'when the service gateway returns a 409' do
+          before do
+            # Stub 409
+            VCAP::CloudController::ServiceBrokers::V1::HttpClient.unstub(:new)
+
+            guid = service_instance.broker_provided_id
+            path = "/gateway/v1/configurations/#{guid}"
+            uri = URI(service.url + path)
+            #uri.user = service.service_broker.auth_username
+            #uri.password = service.service_broker.auth_password
+
+            stub_request(:delete, uri.to_s).to_return(body: '{"description": "service gateway error"}', status: 409)
+
+            #fake_broker_client = VCAP::CloudController::Services::V1::HttpClient.new
+            #fake_broker_client.stub(:deprovision).and_raise
+          end
+
+          it 'forwards the error message from the service gateway' do
+            delete "/v2/service_instances/#{service_instance.guid}", {}, admin_headers
+
+            expect(last_response.status).to eq 409
+            expect(JSON.parse(last_response.body)['description']).to include 'service gateway error'
+          end
+        end
+
       end
 
       context 'with a user provided service instance' do

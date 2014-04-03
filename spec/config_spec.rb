@@ -34,6 +34,10 @@ module VCAP::CloudController
         it "sets a default request_timeout_in_seconds value" do
           expect(config[:request_timeout_in_seconds]).to eq(300)
         end
+
+        it "sets a default value for skip_cert_verify" do
+          expect(config[:skip_cert_verify]).to eq false
+        end
       end
 
       context "when config values are provided" do
@@ -57,6 +61,10 @@ module VCAP::CloudController
 
         it "preserves the request_timeout_in_seconds value from the file" do
           expect(config[:request_timeout_in_seconds]).to eq(600)
+        end
+
+        it "preserves the value of skip_cert_verify from the file" do
+          expect(config[:skip_cert_verify]).to eq true
         end
       end
     end
@@ -129,34 +137,22 @@ module VCAP::CloudController
         Config.configure_components(config)
       end
 
-      it "sets up the service plan" do
-        config = @test_config.merge(trial_db: "no quota")
-        ServicePlan.should_receive(:configure).with("no quota")
-        Config.configure_components(config)
-      end
-
-      it "sets up the service plan" do
-        config = @test_config.merge(trial_db: "no quota")
-        ServicePlan.should_receive(:configure).with("no quota")
-        Config.configure_components(config)
-      end
-
       it "sets up app with whether custom buildpacks are enabled" do
         config = @test_config.merge(disable_custom_buildpacks: true)
 
         expect {
           Config.configure_components(config)
         }.to change {
-          App.custom_buildpacks_enabled?
-        }.to(false)
+          VCAP::CloudController::Config.config[:disable_custom_buildpacks]
+        }.to(true)
 
         config = @test_config.merge(disable_custom_buildpacks: false)
 
         expect {
           Config.configure_components(config)
         }.to change {
-          App.custom_buildpacks_enabled?
-        }.to(true)
+          VCAP::CloudController::Config.config[:disable_custom_buildpacks]
+        }.to(false)
       end
     end
   end

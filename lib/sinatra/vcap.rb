@@ -34,18 +34,16 @@ module Sinatra
         # We don't really have a class to attach a member variable to, so we have to
         # use the env to flag this.
         unless request.env['vcap_exception_body_set']
-          error = ::VCAP::Errors::NotFound.new
-          presenter = ErrorPresenter.new(error)
+          error = ::VCAP::Errors::ApiError.new_from_details("NotFound")
+          presenter = ErrorPresenter.new(error, in_test_mode?)
 
-          body Yajl::Encoder.encode(presenter.sanitized_hash)
+          body Yajl::Encoder.encode(presenter.error_hash)
         end
       end
 
       app.error do
         error = request.env['sinatra.error']
-        presenter = ErrorPresenter.new(error)
-
-        raise error if in_test_mode? && !presenter.api_error?
+        presenter = ErrorPresenter.new(error, in_test_mode?)
 
         status(presenter.response_code)
 
@@ -55,7 +53,7 @@ module Sinatra
           logger.error(presenter.log_message)
         end
 
-        payload = Yajl::Encoder.encode(presenter.sanitized_hash)
+        payload = Yajl::Encoder.encode(presenter.error_hash)
 
         ::VCAP::Component.varz.synchronize do
           varz[:recent_errors] << payload
@@ -116,7 +114,6 @@ module Sinatra
         end
 
         ::VCAP::Request.current_id = @request_guid
-        Steno.config.context.data['request_guid'] = @request_guid
       end
 
       after do
@@ -128,7 +125,6 @@ module Sinatra
         headers['Content-Type'] = 'application/json;charset=utf-8'
         headers[::VCAP::Request::HEADER_NAME] = @request_guid
         ::VCAP::Request.current_id = nil
-        Steno.config.context.data.delete('request_guid')
         nil
       end
     end

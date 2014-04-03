@@ -1,10 +1,17 @@
 module VCAP::CloudController
   class AppAccess < BaseAccess
     def create?(app)
-      super || app.space.developers.include?(context.user)
+      return super if super
+      return false if app.in_suspended_org?
+      app.space.developers.include?(context.user)
     end
 
-    alias_method :update?, :create?
-    alias_method :delete?, :create?
+    def update?(app)
+      create?(app)
+    end
+
+    def delete?(app)
+      create?(app)
+    end
   end
 end

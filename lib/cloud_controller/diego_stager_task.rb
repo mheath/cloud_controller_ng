@@ -24,11 +24,10 @@ module VCAP::CloudController
       end
     end
 
-    attr_reader :config
     attr_reader :message_bus
 
-    def initialize(config, message_bus, app, blobstore_url_generator)
-      @config = config
+    def initialize(staging_timeout, message_bus, app, blobstore_url_generator)
+      @staging_timeout = staging_timeout
       @message_bus = message_bus
       @app = app
       @blobstore_url_generator = blobstore_url_generator
@@ -39,18 +38,11 @@ module VCAP::CloudController
     end
 
     def stage(&completion_callback)
-
-      # The creation of upload handle only guarantees that this cloud controller
-      # is disallowed from trying to stage this app again. It does NOT guarantee that a different
-      # cloud controller will NOT start staging the app in parallel. Therefore, we need to
-      # cache the current task_id here, and later check it was NOT changed by a
-      # different cloud controller completing staging request for the same app before
-      # this cloud controller completes the staging.
       @app.update(staging_task_id: task_id)
 
       logger.info("staging.begin", :app_guid => @app.guid)
-      subject = "diego.staging.start"
-      @message_bus.request(subject, staging_request, {timeout: staging_timeout}) do |bus_response, _|
+
+      @message_bus.request("diego.staging.start", staging_request, {timeout: @staging_timeout}) do |bus_response, _|
         logger.info("diego.staging.response", :app_guid => @app.guid, :response => bus_response)
 
         return unless this_task_is_current_task?
@@ -78,17 +70,14 @@ module VCAP::CloudController
       {
        :app_id => app.guid,
        :task_id => task_id,
-       :memoryMB => app.memory,
-       :diskMB => app.disk_quota,
-       :fileDescriptors => app.file_descriptors,
+       :memory_mb => app.memory,
+       :disk_mb => app.disk_quota,
+       :file_descriptors => app.file_descriptors,
        :environment => environment,
        :stack => app.stack.name,
        # All url generation should go to blobstore_url_generator
-       :download_uri => @blobstore_url_generator.app_package_download_url(app),
-       :upload_uri => @blobstore_url_generator.droplet_upload_url(app),
-       :buildpack_cache_download_uri => @blobstore_url_generator.buildpack_cache_download_url(app),
-       :buildpack_cache_upload_uri => @blobstore_url_generator.buildpack_cache_upload_url(app),
-       :admin_buildpacks => admin_buildpacks
+       :app_bits_download_uri => @blobstore_url_generator.app_package_download_url(app),
+       :buildpacks => buildpacks
       }
     end
 
@@ -96,24 +85,7 @@ module VCAP::CloudController
 
     def environment
       env = []
-      vcap_application = {
-        limits: {
-          mem: app.memory,
-          disk: app.disk_quota,
-          fds: app.file_descriptors
-        },
-        application_version: app.version,
-        application_name: app.name,
-        application_uris: app.uris,
-        version: app.version,
-        name: app.name,
-        uris: app.uris,
-        users: nil
-      }
-
-      app.service_bindings.each
-
-      env << ["VCAP_APPLICATION", vcap_application.to_json]
+      env << ["VCAP_APPLICATION", app.vcap_application.to_json]
       env << ["VCAP_SERVICES", app.system_env_json["VCAP_SERVICES"].to_json]
       db_uri = app.database_uri
       env << ["DATABASE_URL", db_uri] if db_uri
@@ -132,13 +104,13 @@ module VCAP::CloudController
       return app.staging_task_id == task_id
     end
 
-    def admin_buildpacks
+    def buildpacks
       Buildpack.list_admin_buildpacks.
           select(&:enabled).
-          collect { |buildpack| admin_buildpack_entry(buildpack) }
+          collect { |buildpack| buildpack_entry(buildpack) }
     end
 
-    def admin_buildpack_entry(buildpack)
+    def buildpack_entry(buildpack)
       {
           key: buildpack.key,
           url: @blobstore_url_generator.admin_buildpack_download_url(buildpack)
@@ -147,10 +119,6 @@ module VCAP::CloudController
 
     def service_binding_to_staging_request(service_binding)
       ServiceBindingPresenter.new(service_binding).to_hash
-    end
-
-    def staging_timeout
-      @config[:staging] && @config[:staging][:max_staging_runtime] || 120
     end
 
     def logger

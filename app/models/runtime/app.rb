@@ -8,13 +8,13 @@ module VCAP::CloudController
 
     APP_NAME_REGEX = /\A[[:alnum:][:punct:][:print:]]+\Z/.freeze
 
-    class InvalidRouteRelation < InvalidRelation
+    class InvalidRouteRelation < VCAP::Errors::InvalidRelation
       def to_s
         "The URL was not available [route ID #{super}]"
       end
     end
 
-    class InvalidBindingRelation < InvalidRelation;
+    class InvalidBindingRelation < VCAP::Errors::InvalidRelation;
     end
 
     class AlreadyDeletedError < StandardError;
@@ -23,18 +23,8 @@ module VCAP::CloudController
     class ApplicationMissing < RuntimeError
     end
 
-    class << self
-      def configure(custom_buildpacks_enabled)
-        @custom_buildpacks_enabled = custom_buildpacks_enabled
-      end
-
-      def custom_buildpacks_enabled?
-        @custom_buildpacks_enabled
-      end
-    end
-
     one_to_many :droplets
-    one_to_many :service_bindings, :after_remove => :after_remove_binding
+    one_to_many :service_bindings
     one_to_many :events, :class => VCAP::CloudController::AppEvent
     many_to_one :admin_buildpack, class: VCAP::CloudController::Buildpack
     many_to_one :space
@@ -85,7 +75,7 @@ module VCAP::CloudController
 
     alias_method :kill_after_multiple_restarts?, :kill_after_multiple_restarts
 
-    def validate_buildpack_name_or_git_url
+    def copy_buildpack_errors
       bp = buildpack
 
       unless bp.valid?
@@ -95,20 +85,17 @@ module VCAP::CloudController
       end
     end
 
-    def validate_buildpack_is_not_custom
-      return unless column_changed?(:buildpack)
-
-      if buildpack.custom?
-        errors.add(:buildpack, "custom buildpacks are disabled")
-      end
-    end
-
-    def validate_disk_quota
-      return unless disk_quota
-      max_app_disk = Config.config[:maximum_app_disk_in_mb]
-      if disk_quota > max_app_disk
-        errors.add(:disk_quota, "too much disk requested (must be less than #{max_app_disk})")
-      end
+    def validation_policies
+      [
+        AppEnvironmentPolicy.new(self),
+        DiskQuotaPolicy.new(self, max_app_disk_in_mb),
+        MetadataPolicy.new(self, metadata_deserialized),
+        MinMemoryPolicy.new(self),
+        MaxMemoryPolicy.new(self),
+        InstancesPolicy.new(self),
+        HealthCheckPolicy.new(self, health_check_timeout),
+        CustomBuildpackPolicy.new(self, custom_buildpacks_enabled?)
+      ]
     end
 
     def validate
@@ -117,18 +104,12 @@ module VCAP::CloudController
       validates_unique [:space_id, :name]
       validates_format APP_NAME_REGEX, :name
 
-      validate_buildpack_name_or_git_url
-      validate_buildpack_is_not_custom unless self.class.custom_buildpacks_enabled?
+      copy_buildpack_errors
 
       validates_includes PACKAGE_STATES, :package_state, :allow_missing => true
       validates_includes APP_STATES, :state, :allow_missing => true
 
-      validate_environment
-      validate_metadata
-      check_memory_quota
-      validate_instances
-      validate_health_check_timeout
-      validate_disk_quota
+      validation_policies.map(&:validate)
     end
 
     def before_create
@@ -138,7 +119,7 @@ module VCAP::CloudController
 
     def before_save
       if generate_start_event? && !package_hash
-        raise VCAP::Errors::AppPackageInvalid.new("bits have not been uploaded")
+        raise VCAP::Errors::ApiError.new_from_details("AppPackageInvalid", "bits have not been uploaded")
       end
 
       super
@@ -203,8 +184,24 @@ module VCAP::CloudController
         !has_stop_event_for_latest_run?
     end
 
+    def in_suspended_org?
+      space.in_suspended_org?
+    end
+
     def being_stopped?
       column_changed?(:state) && stopped?
+    end
+
+    def scaling_operation?
+      new? || !being_stopped?
+    end
+
+    def buildpack_changed?
+      column_changed?(:buildpack)
+    end
+
+    def organization
+      space && space.organization
     end
 
     def has_stop_event_for_latest_run?
@@ -285,30 +282,28 @@ module VCAP::CloudController
       vcap_services
     end
 
+    def vcap_application
+      {
+        limits: {
+          mem: memory,
+          disk: disk_quota,
+          fds: file_descriptors
+        },
+        application_version: version,
+        application_name: name,
+        application_uris: uris,
+        version: version,
+        name: name,
+        space_name: space.name,
+        space_id: space_guid,
+        uris: uris,
+        users: nil
+      }
+    end
+
     def database_uri
       service_uris = service_bindings.map {|binding| binding.credentials["uri"]}.compact
       DatabaseUriGenerator.new(service_uris).database_uri
-    end
-
-    def validate_environment
-      return if environment_json.nil?
-      unless environment_json.kind_of?(Hash)
-        errors.add(:environment_json, :invalid_environment)
-        return
-      end
-      environment_json.keys.each do |k|
-        errors.add(:environment_json, "reserved_key:#{k}") if k =~ /^(vcap|vmc)_/i
-      end
-    rescue Yajl::ParseError
-      errors.add(:environment_json, :invalid_json)
-    end
-
-    def validate_metadata
-      m = deserialized_values[:metadata]
-      return if m.nil?
-      unless m.kind_of?(Hash)
-        errors.add(:metadata, :invalid_metadata)
-      end
     end
 
     def validate_route(route)
@@ -321,26 +316,8 @@ module VCAP::CloudController
       raise objection unless route.domain.usable_by_organization?(space.organization)
     end
 
-    def additional_memory_requested
-
-      total_requested_memory = requested_memory * requested_instances
-
-      return total_requested_memory if new?
-
-      app_from_db = self.class.find(:guid => guid)
-      if app_from_db.nil?
-        self.class.logger.fatal("app.find.missing", :guid => guid, :self => self.inspect)
-        raise ApplicationMissing, "Attempting to check memory quota. Should have been able to find app with guid #{guid}"
-      end
-      total_existing_memory = app_from_db[:memory] * app_from_db[:instances]
-      total_requested_memory - total_existing_memory
-    end
-
-    def check_memory_quota
-      errors.add(:memory, :zero_or_less) unless requested_memory > 0
-      if space && (space.organization.memory_remaining < additional_memory_requested)
-        errors.add(:memory, :quota_exceeded) if (new? || !being_stopped?)
-      end
+    def custom_buildpacks_enabled?
+      !VCAP::CloudController::Config.config[:disable_custom_buildpacks]
     end
 
     def requested_instances
@@ -348,19 +325,22 @@ module VCAP::CloudController
       instances ? instances : default_instances
     end
 
-    def validate_instances
-      if (requested_instances < 0)
-        errors.add(:instances, :less_than_zero)
-      end
+    def max_app_disk_in_mb
+      VCAP::CloudController::Config.config[:maximum_app_disk_in_mb]
     end
 
-    def validate_health_check_timeout
-      return unless health_check_timeout
-      errors.add(:health_check_timeout, :less_than_zero) unless health_check_timeout >= 0
+    def requested_memory
+      memory ? memory : VCAP::CloudController::Config.config[:default_app_memory]
+    end
 
-      if health_check_timeout > VCAP::CloudController::Config.config[:maximum_health_check_timeout]
-        errors.add(:health_check_timeout, :maximum_exceeded)
-      end
+    def additional_memory_requested
+      total_requested_memory = requested_memory * requested_instances
+
+      return total_requested_memory if new?
+
+      app = app_from_db
+      total_existing_memory = app[:memory] * app[:instances]
+      total_requested_memory - total_existing_memory
     end
 
     # We need to overide this ourselves because we are really doing a
@@ -414,10 +394,6 @@ module VCAP::CloudController
       routes.map(&:fqdn)
     end
 
-    def after_remove_binding(binding)
-      mark_for_restaging
-    end
-
     def mark_as_failed_to_stage
       self.package_state = "FAILED"
       save
@@ -438,15 +414,15 @@ module VCAP::CloudController
       AutoDetectionBuildpack.new
     end
 
-    def buildpack=(buildpack)
-      admin_buildpack = Buildpack.find(name: buildpack.to_s)
+    def buildpack=(buildpack_name)
+      self.admin_buildpack = nil
+      super(nil)
+      admin_buildpack = Buildpack.find(name: buildpack_name.to_s)
+      
       if admin_buildpack
         self.admin_buildpack = admin_buildpack
-        super(nil)
-        return
-      else
-        self.admin_buildpack = nil
-        super(buildpack)
+      elsif buildpack_name != "" #git url case
+        super(buildpack_name)
       end
     end
 
@@ -500,6 +476,20 @@ module VCAP::CloudController
 
     private
 
+    def metadata_deserialized
+      deserialized_values[:metadata]
+    end
+
+    def app_from_db
+      error_message = "Expected app record not found in database with guid %s"
+      app_from_db = self.class.find(guid: guid)
+      if app_from_db.nil?
+        self.class.logger.fatal("app.find.missing", guid: guid, self: inspect)
+        raise ApplicationMissing, error_message % guid
+      end
+      app_from_db
+    end
+
     WHITELIST_SERVICE_KEYS = %W[name label tags plan credentials syslog_drain_url].freeze
     def service_binding_json (binding)
       vcap_service = {}
@@ -522,11 +512,6 @@ module VCAP::CloudController
 
     def health_manager_client
       CloudController::DependencyLocator.instance.health_manager_client
-    end
-
-    def requested_memory
-      default_memory = VCAP::CloudController::Config.config[:default_app_memory]
-      memory ? memory : default_memory
     end
 
     def mark_routes_changed(_)

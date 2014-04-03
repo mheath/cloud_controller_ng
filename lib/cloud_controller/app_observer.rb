@@ -55,15 +55,15 @@ module VCAP::CloudController
 
       def stage_app(app, &completion_callback)
         if app.package_hash.nil? || app.package_hash.empty?
-          raise Errors::AppPackageInvalid, "The app package hash is empty"
+          raise Errors::ApiError.new_from_details("AppPackageInvalid", "The app package hash is empty")
         end
 
-        if app.buildpack.custom? && !App.custom_buildpacks_enabled?
-          raise Errors::CustomBuildpacksDisabled
+        if app.buildpack.custom? && !app.custom_buildpacks_enabled?
+          raise Errors::ApiError.new_from_details("CustomBuildpacksDisabled")
         end
 
         if @config[:diego]
-          task = DiegoStagerTask.new(@config, @message_bus, app, dependency_locator.blobstore_url_generator)
+          task = DiegoStagerTask.new(@config[:staging][:timeout_in_seconds], @message_bus, app, dependency_locator.blobstore_url_generator)
         else
           task = AppStagerTask.new(@config, @message_bus, app, @dea_pool, @stager_pool, dependency_locator.blobstore_url_generator)
         end

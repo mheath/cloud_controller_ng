@@ -70,7 +70,6 @@ quota_definitions:
     total_services: 100
     non_basic_services_allowed: true
     total_routes: 1000
-    trial_db_allowed: true
 
 default_quota_definition: default
 
@@ -102,6 +101,7 @@ buildpacks:
 db_encryption_key: some-key
 
 staging:
+  timeout_in_seconds: 120
   auth:
     user: zxsfhgjg
     password: ZNVfdase9

@@ -51,6 +51,9 @@ module VCAP::CloudController
         expect(res[:console]).to eq false
         expect(res[:start_command]).to be_nil
         expect(res[:health_check_timeout]).to be_nil
+
+        expect(app.vcap_application).to be
+        expect(res[:vcap_application]).to eql(app.vcap_application)
       end
 
       context "with an app enabled for console support" do
@@ -147,6 +150,18 @@ module VCAP::CloudController
             :index => 1,
           )
         )
+
+        DeaClient.start_instance_at_index(app, 1)
+      end
+
+      it "should not log passwords" do
+        logger = double(Steno)
+        allow(DeaClient).to receive(:logger).and_return(logger)
+
+        dea_pool.should_receive(:find_dea).once.and_return(nil)
+        logger.should_receive(:error) do |msg, data|
+          data[:message].should_not include(:services, :env, :executableUri)
+        end.once
 
         DeaClient.start_instance_at_index(app, 1)
       end
@@ -340,7 +355,7 @@ module VCAP::CloudController
 
         expect {
           DeaClient.get_file_uri_for_active_instance_by_index(app, path, instance)
-        }.to raise_error Errors::FileError, "File error: Request failed for app: #{app.name} path: #{path} as the app is in stopped state."
+        }.to raise_error Errors::ApiError, "File error: Request failed for app: #{app.name} path: #{path} as the app is in stopped state."
       end
 
       it "should raise an error if the instance is out of range" do
@@ -352,7 +367,8 @@ module VCAP::CloudController
         expect {
           DeaClient.get_file_uri_for_active_instance_by_index(app, path, instance)
         }.to raise_error { |error|
-          error.should be_an_instance_of Errors::FileError
+          error.should be_an_instance_of Errors::ApiError
+          error.name.should == "FileError"
 
           msg = "File error: Request failed for app: #{app.name}"
           msg << ", instance: #{instance} and path: #{path} as the instance is"
@@ -447,7 +463,7 @@ module VCAP::CloudController
 
         expect {
           DeaClient.get_file_uri_for_active_instance_by_index(app, path, instance)
-        }.to raise_error Errors::FileError, msg
+        }.to raise_error Errors::ApiError, msg
 
         expect(message_bus).to have_requested_synchronous_messages("dea.find.droplet", search_options, {timeout: 2})
       end
@@ -466,7 +482,7 @@ module VCAP::CloudController
 
         expect {
           DeaClient.get_file_uri_by_instance_guid(app, path, instance_id)
-        }.to raise_error Errors::FileError, msg
+        }.to raise_error Errors::ApiError, msg
       end
 
       it "should return the file uri if the required instance is found via DEA v1" do
@@ -549,7 +565,8 @@ module VCAP::CloudController
         expect {
           DeaClient.get_file_uri_by_instance_guid(app, path, instance_id)
         }.to raise_error { |error|
-          error.should be_an_instance_of Errors::FileError
+          error.should be_an_instance_of Errors::ApiError
+          error.name.should == "FileError"
 
           msg = "File error: Request failed for app: #{app.name}"
           msg << ", instance_id: #{instance_id} and path: #{path} as the instance_id is"
@@ -568,7 +585,7 @@ module VCAP::CloudController
 
         expect {
           DeaClient.find_stats(app)
-        }.to raise_error Errors::StatsError, "Stats error: Request failed for app: #{app.name} as the app is in stopped state."
+        }.to raise_error Errors::ApiError, "Stats error: Request failed for app: #{app.name} as the app is in stopped state."
       end
 
       it "should return an empty hash if the app is allowed to be in stopped state" do
@@ -699,9 +716,9 @@ module VCAP::CloudController
 
     describe "find_all_instances" do
       let!(:health_manager_client) do
-        hm = VCAP::CloudController::HealthManagerClient.new(message_bus)
-        VCAP::CloudController::DeaClient.stub(:health_manager_client) { hm }
-        hm
+        CloudController::DependencyLocator.instance.health_manager_client.tap do |hm|
+          VCAP::CloudController::DeaClient.stub(:health_manager_client) { hm }
+        end
       end
 
       include Errors
@@ -714,85 +731,7 @@ module VCAP::CloudController
 
         expect {
           DeaClient.find_all_instances(app)
-        }.to raise_error(Errors::InstancesError, expected_msg)
-      end
-
-      it "should return flapping instances" do
-        app.instances = 2
-        app.should_receive(:stopped?).and_return(false)
-
-        search_options = {
-          state: :FLAPPING,
-          version: app.version,
-          droplet: app.guid
-        }
-
-        flapping_instances = {
-          "indices" => [
-            { "index" => 0, "since" => 1},
-            { "index" => 1, "since" => 2},
-          ],
-        }
-
-        message_bus.respond_to_synchronous_request("healthmanager.status", [flapping_instances])
-
-        # Should not find starting or running instances if all instances are
-        # flapping.
-        DeaClient.should_not_receive(:find_instances)
-
-        app_instances = DeaClient.find_all_instances(app)
-        expect(app_instances).to eq(
-          0 => {
-            :state => "FLAPPING",
-            :since => 1,
-          },
-          1 => {
-            :state => "FLAPPING",
-            :since => 2,
-          }
-        )
-
-        expect(message_bus).to have_requested_synchronous_messages("healthmanager.status", search_options, {result_count: 2, timeout: 2})
-      end
-
-      it "should ignore out of range indices of flapping instances" do
-        app.instances = 2
-        app.should_receive(:stopped?).and_return(false)
-
-        flapping_instances = {
-          "indices" => [
-            { "index" => -1, "since" => 1 },  # -1 is out of range.
-            { "index" => 2, "since" => 2 },  # 2 is out of range.
-          ],
-        }
-
-        message_bus.respond_to_synchronous_request("healthmanager.status", [flapping_instances])
-        message_bus.respond_to_synchronous_request("dea.find.droplet", [])
-
-        Time.stub(:now) { 1 }
-
-        app_instances = DeaClient.find_all_instances(app)
-        expect(app_instances).to eq(
-          0 => {
-            :state => "DOWN",
-            :since => 1,
-          },
-          1 => {
-            :state => "DOWN",
-            :since => 1,
-          }
-        )
-
-        expect(message_bus).to have_requested_synchronous_messages(
-          "healthmanager.status",
-          {state: :FLAPPING, version: app.version, droplet: app.guid},
-          {result_count: 2, timeout: 2}
-        )
-        expect(message_bus).to have_requested_synchronous_messages(
-          "dea.find.droplet",
-          {states: [:STARTING, :RUNNING], version: app.version, droplet: app.guid},
-          {expected: 2, result_count: 2, timeout: 2}
-        )
+        }.to raise_error(Errors::ApiError, expected_msg)
       end
 
       it "should return starting or running instances" do

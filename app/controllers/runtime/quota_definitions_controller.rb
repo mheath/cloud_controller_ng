@@ -6,7 +6,6 @@ module VCAP::CloudController
       attribute  :total_services,             Integer
       attribute  :total_routes,               Integer
       attribute  :memory_limit,               Integer
-      attribute  :trial_db_allowed,           Message::Boolean, :default => false
     end
 
     query_parameters :name
@@ -14,9 +13,9 @@ module VCAP::CloudController
     def self.translate_validation_exception(e, attributes)
       name_errors = e.errors.on(:name)
       if name_errors && name_errors.include?(:unique)
-        Errors::QuotaDefinitionNameTaken.new(attributes["name"])
+        Errors::ApiError.new_from_details("QuotaDefinitionNameTaken", attributes["name"])
       else
-        Errors::QuotaDefinitionInvalid.new(e.errors.full_messages)
+        Errors::ApiError.new_from_details("QuotaDefinitionInvalid", e.errors.full_messages)
       end
     end
 

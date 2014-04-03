@@ -9,9 +9,9 @@ describe VCAP::CloudController::RestController::Base, type: :controller do
   let(:env) { {} }
   let(:params) { {} }
 
-  subject {
+  subject do
     VCAP::CloudController::RestController::Base.new(double(:config), logger, env, params, double(:body))
-  }
+  end
 
   describe "#dispatch" do
     context "when the dispatch is succesful" do
@@ -110,11 +110,10 @@ describe VCAP::CloudController::RestController::Base, type: :controller do
       end
 
       it "should reraise any vcap error" do
-        error_class = Class.new(VCAP::Errors::Error)
-        subject.stub(:to_s).and_raise(error_class.new(423, 10234, "Foo"))
+        subject.stub(:to_s).and_raise(VCAP::Errors::ApiError.new_from_details("NotAuthorized"))
         expect {
           subject.dispatch(:to_s)
-        }.to raise_error error_class
+        }.to raise_error VCAP::Errors::ApiError
       end
 
       it "should log an error for a Sequel Database Error error" do
@@ -129,14 +128,14 @@ describe VCAP::CloudController::RestController::Base, type: :controller do
         subject.stub(:to_s).and_raise(JsonMessage::Error)
         expect {
           subject.dispatch(:to_s)
-        }.to raise_error VCAP::Errors::MessageParseError
+        }.to raise_error(VCAP::Errors::ApiError, /Request invalid due to parse error/)
       end
 
       it "should log an error for a Model error" do
-        subject.stub(:to_s).and_raise(VCAP::CloudController::InvalidRelation)
+        subject.stub(:to_s).and_raise(VCAP::Errors::InvalidRelation)
         expect {
           subject.dispatch(:to_s)
-        }.to raise_error VCAP::Errors::InvalidRelation
+        }.to raise_error(VCAP::Errors::ApiError, /Invalid relation/)
       end
 
       describe '#redirect' do

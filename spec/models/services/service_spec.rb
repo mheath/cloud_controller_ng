@@ -67,20 +67,6 @@ module VCAP::CloudController
           }.to raise_error('label and provider is taken')
         end
       end
-
-      context 'when the sso_client_id is not unique' do
-        let(:existing_service) { Service.make }
-        let(:service) { Service.make_unsaved(sso_client_id: existing_service.sso_client_id) }
-
-        it 'is not valid' do
-          expect(service).not_to be_valid
-        end
-
-        it 'raises an error on save' do
-          expect { service.save }.
-            to raise_error(Sequel::ValidationFailed, 'Dashboard client ids must be unique')
-        end
-      end
     end
 
     it 'ensures that blank provider values will be treated as nil' do
@@ -249,14 +235,14 @@ module VCAP::CloudController
 
         it 'does not make any requests to the service broker' do
           service.purge
-          http_client_stub = VCAP::CloudController::ServiceBroker::V1::HttpClient.new
+          http_client_stub = VCAP::CloudController::ServiceBrokers::V1::HttpClient.new
           expect(http_client_stub).not_to have_received(:unbind)
           expect(http_client_stub).not_to have_received(:deprovision)
         end
 
-        it 'marks apps for restaging that were bound to the deleted service' do
+        it 'does not mark apps for restaging that were bound to the deleted service' do
           service_binding.app.update(package_state: 'STAGED')
-          expect { service.purge }.to change{ service_binding.app.reload.pending? }.to(true)
+          expect { service.purge }.not_to change{ service_binding.app.reload.pending? }
         end
       end
 
@@ -282,9 +268,9 @@ module VCAP::CloudController
           expect(a_request(:delete, /.*/)).not_to have_been_made
         end
 
-        it 'marks apps for restaging that were bound to the deleted service' do
+        it 'does not mark apps for restaging that were bound to the deleted service' do
           service_binding.app.update(package_state: 'STAGED')
-          expect { service.purge }.to change{ service_binding.app.reload.pending? }.to(true)
+          expect { service.purge }.not_to change{ service_binding.app.reload.pending? }
         end
       end
 
@@ -348,13 +334,13 @@ module VCAP::CloudController
         let(:service) { Service.make(service_broker: nil) }
 
         it 'returns a v1 broker client' do
-          v1_client = double(ServiceBroker::V1::Client)
-          ServiceBroker::V1::Client.stub(:new).and_return(v1_client)
+          v1_client = double(ServiceBrokers::V1::Client)
+          ServiceBrokers::V1::Client.stub(:new).and_return(v1_client)
 
           client = service.client
           client.should == v1_client
 
-          expect(ServiceBroker::V1::Client).to have_received(:new).with(
+          expect(ServiceBrokers::V1::Client).to have_received(:new).with(
             hash_including(
               url: service.url,
               auth_token: service.service_auth_token.token,
@@ -368,7 +354,7 @@ module VCAP::CloudController
         let(:service) { Service.make(service_broker: ServiceBroker.make) }
 
         it 'returns a v2 broker client' do
-          v2_client = double(ServiceBroker::V2::Client)
+          v2_client = double(ServiceBrokers::V2::Client)
           service.service_broker.stub(:client).and_return(v2_client)
 
           client = service.client

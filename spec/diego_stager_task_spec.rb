@@ -9,7 +9,7 @@ module VCAP::CloudController
     end
 
     let(:message_bus) { CfMessageBus::MockMessageBus.new }
-    let(:config_hash) { { diego: true } }
+    let(:staging_timeout) { 360 }
     let(:environment_json) { {} }
     let(:app) do
       AppFactory.make(:package_hash  => "abc",
@@ -32,7 +32,7 @@ module VCAP::CloudController
       EM.stub(:defer).and_yield
     end
 
-    let(:diego_stager_task) { DiegoStagerTask.new(config_hash, message_bus, app, blobstore_url_generator) }
+    let(:diego_stager_task) { DiegoStagerTask.new(staging_timeout, message_bus, app, blobstore_url_generator) }
 
     describe '#stage' do
       let(:logger) { FakeLogger.new([]) }
@@ -195,30 +195,27 @@ module VCAP::CloudController
         app.add_route(route)
       end
 
+      describe "limits" do
+        it "limits memory" do
+          expect(diego_stager_task.staging_request[:memory_mb]).to eq(259)
+        end
+        it "limits disk" do
+          expect(diego_stager_task.staging_request[:disk_mb]).to eq(799)
+        end
+        it "limits file descriptors" do
+          expect(diego_stager_task.staging_request[:file_descriptors]).to eq(1234)
+        end
+      end
       describe "environment" do
         it "contains user defined environment variables" do
           expect(diego_stager_task.staging_request[:environment].last).to eq(["USER_DEFINED","OK"])
         end
 
-        it "contains VCAP_APPLICATION" do
-          expected_hash = {
-            limits: {
-              mem: 259,
-              disk: 799,
-              fds: 1234,
-            },
-            application_version: app.version,
-            application_name: "app-name",
-            application_uris: app.uris,
-            version: app.version,
-            name: "app-name",
-            uris: app.uris,
-            users: nil
-          }
-
+        it "contains VCAP_APPLICATION from application" do
+          expect(app.vcap_application).to be
           expect(
             diego_stager_task.staging_request[:environment]
-          ).to include(["VCAP_APPLICATION", expected_hash.to_json])
+          ).to include(["VCAP_APPLICATION", app.vcap_application.to_json])
         end
 
         it "contains VCAP_SERVICES" do

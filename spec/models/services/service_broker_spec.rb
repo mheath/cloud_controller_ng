@@ -76,7 +76,7 @@ module VCAP::CloudController
     describe '#client' do
       it 'returns a client created with the correct arguments' do
         v2_client = double('client')
-        ServiceBroker::V2::Client.should_receive(:new).with(url: broker_url, auth_username: auth_username, auth_password: auth_password).and_return(v2_client)
+        ServiceBrokers::V2::Client.should_receive(:new).with(url: broker_url, auth_username: auth_username, auth_password: auth_password).and_return(v2_client)
         expect(broker.client).to be(v2_client)
       end
     end
@@ -109,6 +109,24 @@ module VCAP::CloudController
           }.to_not change {
             Service.where(:id => service.id).count
           }.by(-1)
+        end
+      end
+
+      context 'when associated with a dashboard client' do
+        before do
+          ServiceDashboardClient.claim_client_for_broker('some-uaa-id', service_broker)
+        end
+
+        it 'successfully destroys the broker' do
+          expect { service_broker.destroy(savepoint: true) }.
+            to change(ServiceBroker, :count).by(-1)
+        end
+
+        it 'sets the broker_id of the dashboard client to nil' do
+          client = ServiceDashboardClient.find_clients_claimed_by_broker(service_broker).first
+          expect(client.service_broker_id).to eq(service_broker.id)
+          service_broker.destroy(savepoint: true)
+          expect(client.reload.service_broker_id).to be_nil
         end
       end
     end

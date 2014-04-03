@@ -2,8 +2,10 @@ require "spec_helper"
 
 module VCAP::CloudController
   describe VCAP::CloudController::ServiceBinding, :services, type: :model do
+
+    let(:client) { double('broker client', unbind: nil, deprovision: nil) }
+
     before do
-      client = double('broker client', unbind: nil, deprovision: nil)
       Service.any_instance.stub(:client).and_return(client)
     end
 
@@ -101,6 +103,25 @@ module VCAP::CloudController
       end
     end
 
+    describe '#in_suspended_org?' do
+      let(:app) { VCAP::CloudController::App.make }
+      subject(:service_binding) {  VCAP::CloudController::ServiceBinding.new(app: app) }
+
+      context 'when in a suspended organization' do
+        before { allow(app).to receive(:in_suspended_org?).and_return(true) }
+        it 'is true' do
+          expect(service_binding).to be_in_suspended_org
+        end
+      end
+
+      context 'when in an unsuspended organization' do
+        before { allow(app).to receive(:in_suspended_org?).and_return(false) }
+        it 'is false' do
+          expect(service_binding).not_to be_in_suspended_org
+        end
+      end
+    end
+
     describe "logging service bindings" do
       let(:service) { Service.make }
       let(:service_plan) { ServicePlan.make(:service => service) }
@@ -152,28 +173,6 @@ module VCAP::CloudController
       end
     end
 
-    describe "binding" do
-      let(:service) { Service.make }
-      let(:service_plan) { ServicePlan.make(:service => service) }
-      let(:service_instance) do
-        ManagedServiceInstance.make(
-          :service_plan => service_plan,
-          :name => "my-postgresql",
-          :space => Space.make,
-          :gateway_name => 'gwname_instance',
-          :credentials => Sham.service_credentials
-        )
-      end
-
-      let(:bind_resp) do
-        VCAP::Services::Api::GatewayHandleResponse.new(
-          :service_id => "gwname_binding",
-          :configuration => "abc",
-          :credentials => {:password => "foo"}
-        )
-      end
-    end
-
     describe "restaging" do
       let(:app) do
         app = AppFactory.make
@@ -185,13 +184,13 @@ module VCAP::CloudController
 
       let(:service_instance) { ManagedServiceInstance.make(:space => app.space) }
 
-      it "should trigger restaging when creating a binding" do
+      it "should not trigger restaging when creating a binding" do
         ServiceBinding.make(:app => app, :service_instance => service_instance)
         app.refresh
-        app.needs_staging?.should be_true
+        app.needs_staging?.should be_false
       end
 
-      it "should trigger restaging when directly destroying a binding" do
+      it "should not trigger restaging when directly destroying a binding" do
         binding = ServiceBinding.make(:app => app, :service_instance => service_instance)
         app.refresh
         fake_app_staging(app)
@@ -199,17 +198,84 @@ module VCAP::CloudController
 
         binding.destroy(savepoint: true)
         app.refresh
-        app.needs_staging?.should be_true
+        app.needs_staging?.should be_false
       end
 
-      it "should trigger restaging when indirectly destroying a binding" do
+      it "should not trigger restaging when indirectly destroying a binding" do
         binding = ServiceBinding.make(:app => app, :service_instance => service_instance)
         app.refresh
         fake_app_staging(app)
         app.needs_staging?.should be_false
 
         app.remove_service_binding(binding)
-        app.needs_staging?.should be_true
+        app.needs_staging?.should be_false
+      end
+    end
+
+    describe '#bind!' do
+      let(:binding) { ServiceBinding.make }
+
+      before do
+        allow(client).to receive(:bind)
+        allow(binding).to receive(:save)
+      end
+
+      it 'sends a bind request to the broker' do
+        binding.bind!
+
+        expect(client).to have_received(:bind).with(binding)
+      end
+
+      it 'saves the binding to the database' do
+        binding.bind!
+
+        expect(binding).to have_received(:save)
+      end
+
+      context 'when sending a bind request to the broker raises an error' do
+        before do
+          allow(client).to receive(:bind).and_raise(StandardError.new('bind_error'))
+        end
+
+        it 'raises the bind error' do
+          expect { binding.bind! }.to raise_error(/bind_error/)
+        end
+      end
+
+      context 'when the model save raises an error' do
+        before do
+          allow(binding).to receive(:save).and_raise(StandardError.new('save'))
+          allow(client).to receive(:unbind)
+        end
+
+        it 'sends an unbind request to the broker' do
+          binding.bind! rescue nil
+
+          expect(client).to have_received(:unbind).with(binding)
+        end
+
+        it 'raises the save error' do
+          expect { binding.bind! }.to raise_error(/save/)
+        end
+
+        context 'and the unbind also raises an error' do
+          let(:logger) { double('logger') }
+
+          before do
+            allow(client).to receive(:unbind).and_raise(StandardError.new('unbind_error'))
+            allow(binding).to receive(:logger).and_return(logger)
+            allow(logger).to receive(:error)
+          end
+
+          it 'logs the unbind error' do
+            binding.bind! rescue nil
+            expect(logger).to have_received(:error).with(/Unable to unbind.*unbind_error/)
+          end
+
+          it 'raises the save error' do
+            expect { binding.bind! }.to raise_error(/save/)
+          end
+        end
       end
     end
   end

@@ -1,5 +1,3 @@
-require "vcap/errors"
-
 module VCAP::CloudController
   class AppStopper
     attr_reader :message_bus
@@ -87,7 +85,7 @@ module VCAP::CloudController
           msg = "Request failed for app: #{app.name}"
           msg << " as the app is in stopped state."
 
-          raise InstancesError.new(msg)
+          raise VCAP::Errors::ApiError.new_from_details("InstancesError", msg)
         end
 
         all_instances = {}
@@ -170,9 +168,7 @@ module VCAP::CloudController
           dea_pool.reserve_app_memory(dea_id, app.memory)
           stager_pool.reserve_app_memory(dea_id, app.memory)
         else
-          message.delete(:services)
-          message.delete(:executableUri)
-          logger.error "dea-client.no-resources-available", message: message
+          logger.error "dea-client.no-resources-available", message: scrub_sensitive_fields(message)
         end
       end
 
@@ -202,7 +198,7 @@ module VCAP::CloudController
           msg = "Request failed for app: #{app.name}, instance: #{index}"
           msg << " and path: #{path || '/'} as the instance is out of range."
 
-          raise FileError.new(msg)
+          raise ApiError.new_from_details("FileError", msg)
         end
 
         search_criteria = {
@@ -216,7 +212,7 @@ module VCAP::CloudController
           msg = "Request failed for app: #{app.name}, instance: #{index}"
           msg << " and path: #{path || '/'} as the instance is not found."
 
-          raise FileError.new(msg)
+          raise ApiError.new_from_details("FileError", msg)
         end
         result
       end
@@ -227,7 +223,7 @@ module VCAP::CloudController
           msg = "Request failed for app: #{app.name}, instance_id: #{instance_id}"
           msg << " and path: #{path || '/'} as the instance_id is not found."
 
-          raise FileError.new(msg)
+          raise ApiError.new_from_details("FileError", msg)
         end
         result
       end
@@ -247,7 +243,7 @@ module VCAP::CloudController
             msg = "Request failed for app: #{app.name}"
             msg << " as the app is in stopped state."
 
-            raise StatsError.new(msg)
+            raise ApiError.new_from_details("StatsError", msg)
           end
 
           return {}
@@ -309,13 +305,14 @@ module VCAP::CloudController
           debug: app.debug,
           start_command: app.command,
           health_check_timeout: app.health_check_timeout,
+          vcap_application: app.vcap_application,
         }
       end
 
       private
 
       def health_manager_client
-        @health_manager_client ||= CloudController::DependencyLocator.instance.health_manager_client
+        CloudController::DependencyLocator.instance.health_manager_client
       end
 
       # @param [Enumerable, #each] indices the range / sequence of instances to start
@@ -329,7 +326,7 @@ module VCAP::CloudController
           msg = "Request failed for app: #{app.name} path: #{path || '/'} "
           msg << "as the app is in stopped state."
 
-          raise FileError.new(msg)
+          raise ApiError.new_from_details("FileError", msg)
         end
 
         search_options = {
@@ -374,6 +371,14 @@ module VCAP::CloudController
       def dea_request_find_droplet(args, opts = {})
         logger.debug "sending dea.find.droplet with args: '#{args}' and opts: '#{opts}'"
         message_bus.synchronous_request("dea.find.droplet", args, opts)
+      end
+
+      def scrub_sensitive_fields(message)
+        scrubbed_message = message.dup
+        scrubbed_message.delete(:services)
+        scrubbed_message.delete(:executableUri)
+        scrubbed_message.delete(:env)
+        scrubbed_message
       end
 
       def logger

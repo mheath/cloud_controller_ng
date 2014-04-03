@@ -49,6 +49,9 @@ platform using the NATS message bus. For example, it performs the following usin
 
 ## Testing
 
+To maintain a consistent and effective approach to testing, please refer to `spec/README.md` and
+keep it up to date, documenting the purpose of the various types of tests.
+
 By default `rspec` will run test suite with sqlite3 in-memory database;
 however, you can specify connection string via `DB_CONNECTION` environment
 variable to test against postgres and mysql. Examples:
@@ -66,18 +69,17 @@ The development team typically will run the specs to a single file as (e.g.)
 
 ### Running all the tests
 
-There are a very large number of tests in Cloud Controller, so the development team typically uses [parallel_rspec](https://github.com/grosser/parallel_tests):
+    bundle exec rake spec
 
-    bundle exec parallel_rspec spec -s 'integration|acceptance'
+Due to the large number of tests, the rake spec task is configured to run in parallel using [parallel_rspec](https://github.com/grosser/parallel_tests).
 
-It is important to remember to use `-s integration` to force all the integration specs to run in the same process.
-Without it, you will see failures due to two tests trying to start NATS on the same port at the same time, for instance.
+Integration and acceptance tests, however, do not support concurrent testing (e.g. starting NATS on the same port at the same time), and are thus run serially.
 
 ## API documentation
 
 To genenerate the API documentation
 
-    bundle exec rspec spec/api/ --format RspecApiDocumentation::ApiFormatter
+    bundle exec rspec spec/api/documentation --format RspecApiDocumentation::ApiFormatter
     open doc/api/index.html
 
 ## Logs

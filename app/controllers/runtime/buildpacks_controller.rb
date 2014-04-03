@@ -12,16 +12,17 @@ module VCAP::CloudController
     def self.translate_validation_exception(e, attributes)
       buildpack_errors = e.errors.on(:name)
       if buildpack_errors && buildpack_errors.include?(:unique)
-        Errors::BuildpackNameTaken.new("#{attributes["name"]}")
+        Errors::ApiError.new_from_details("BuildpackNameTaken", "#{attributes["name"]}")
       else
-        Errors::BuildpackInvalid.new(e.errors.full_messages)
+        Errors::ApiError.new_from_details("BuildpackInvalid", e.errors.full_messages)
       end
     end
 
     def delete(guid)
       buildpack = find_guid_and_validate_access(:delete, guid)
       response = do_delete(buildpack)
-      delete_buildpack_in_blobstore(buildpack.key)
+
+      BuildpackBitsDelete.delete_when_safe(buildpack.key, :buildpack_blobstore, @config[:staging][:timeout_in_seconds])
       response
     end
 
@@ -34,12 +35,6 @@ module VCAP::CloudController
     private
 
     attr_reader :buildpack_blobstore
-
-    def delete_buildpack_in_blobstore(blobstore_key)
-      return unless blobstore_key
-      blobstore_delete = Jobs::Runtime::BlobstoreDelete.new(blobstore_key, :buildpack_blobstore)
-      Jobs::Enqueuer.new(blobstore_delete, queue: "cc-generic").enqueue()
-    end
 
     def inject_dependencies(dependencies)
       super

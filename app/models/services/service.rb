@@ -14,7 +14,7 @@ module VCAP::CloudController
 
     export_attributes :label, :provider, :url, :description, :long_description,
                       :version, :info_url, :active, :bindable,
-                      :unique_id, :extra, :tags, :requires, :documentation_url
+                      :unique_id, :extra, :tags, :requires, :documentation_url, :service_broker_guid
 
     import_attributes :label, :provider, :url, :description, :long_description,
                       :version, :info_url, :active, :bindable,
@@ -29,7 +29,6 @@ module VCAP::CloudController
       validates_url      :url,                message: 'must be a valid url'
       validates_url      :info_url,           message: 'must be a valid url'
       validates_unique   :unique_id,          message: Sequel.lit('Service ids must be unique')
-      validates_unique   :sso_client_id,      message: Sequel.lit('Dashboard client ids must be unique')
 
       if v2?
         validates_unique :label, message: Sequel.lit('Service name must be unique') do |ds|
@@ -74,21 +73,15 @@ module VCAP::CloudController
       !service_broker.nil?
     end
 
-    class MissingServiceAuthToken < StandardError;
-      def error_code
-        500
-      end
-    end
-
     def client
       if purging
         ServiceBrokers::NullClient.new
       elsif v2?
         service_broker.client
       else
-        raise MissingServiceAuthToken, "Missing Service Auth Token for service: #{label}" if(service_auth_token.nil?)
+        raise VCAP::Errors::ApiError.new_from_details("MissingServiceAuthToken", label) if service_auth_token.nil?
 
-        @v1_client ||= ServiceBroker::V1::Client.new(
+        @v1_client ||= ServiceBrokers::V1::Client.new(
           url: url,
           auth_token: service_auth_token.token,
           timeout: timeout
@@ -109,6 +102,10 @@ module VCAP::CloudController
         end
         self.destroy
       end
+    end
+
+    def service_broker_guid
+      service_broker ? service_broker.guid : nil
     end
   end
 end

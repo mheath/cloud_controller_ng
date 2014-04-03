@@ -55,26 +55,17 @@ module VCAP::CloudController
       begin
         save
       rescue => e
-        begin
-          client.unbind(self)
-        rescue => unbind_e
-          logger.error "Unable to unbind #{self}: #{unbind_e}"
-        end
-
+        safe_unbind
         raise e
       end
     end
 
+    def in_suspended_org?
+      app.in_suspended_org?
+    end
+
     def space
       service_instance.space
-    end
-
-    def after_create
-      mark_app_for_restaging
-    end
-
-    def after_update
-      mark_app_for_restaging
     end
 
     def after_initialize
@@ -84,12 +75,6 @@ module VCAP::CloudController
 
     def before_destroy
       client.unbind(self)
-
-      mark_app_for_restaging
-    end
-
-    def mark_app_for_restaging
-      app.mark_for_restaging(:save => true) if app
     end
 
     def self.user_visibility_filter(user)
@@ -137,6 +122,14 @@ module VCAP::CloudController
 
     def binding_options=(values)
       super(Yajl::Encoder.encode(values))
+    end
+
+    private
+
+    def safe_unbind
+      client.unbind(self)
+    rescue => unbind_e
+      logger.error "Unable to unbind #{self}: #{unbind_e}"
     end
 
   end

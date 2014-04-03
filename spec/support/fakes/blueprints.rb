@@ -85,7 +85,6 @@ module VCAP::CloudController
     end
     bindable          { true }
     active            { true }
-    sso_client_id { Sham.guid }
   end
 
   Service.blueprint(:v1) do
@@ -150,6 +149,11 @@ module VCAP::CloudController
     auth_password     { Sham.auth_password }
   end
 
+  ServiceDashboardClient.blueprint do
+    uaa_id          { Sham.name }
+    service_broker  { ServiceBroker.make }
+  end
+
   ServicePlan.blueprint do
     name              { Sham.name }
     free              { false }
@@ -175,8 +179,10 @@ module VCAP::CloudController
     type       { Sham.name}
     actor      { Sham.guid }
     actor_type { Sham.name }
+    actor_name { Sham.name }
     actee      { Sham.guid }
     actee_type { Sham.name }
+    actee_name { Sham.name }
     space      { Space.make }
   end
 
@@ -246,7 +252,6 @@ module VCAP::CloudController
     total_services { 60 }
     total_routes { 1_000 }
     memory_limit { 20_480 } # 20 GB
-    trial_db_allowed { false }
   end
 
   Buildpack.blueprint do

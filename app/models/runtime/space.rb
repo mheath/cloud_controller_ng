@@ -1,8 +1,8 @@
 module VCAP::CloudController
   class Space < Sequel::Model
-    class InvalidDeveloperRelation < InvalidRelation; end
-    class InvalidAuditorRelation < InvalidRelation; end
-    class InvalidManagerRelation < InvalidRelation; end
+    class InvalidDeveloperRelation < VCAP::Errors::InvalidRelation; end
+    class InvalidAuditorRelation < VCAP::Errors::InvalidRelation; end
+    class InvalidManagerRelation < VCAP::Errors::InvalidRelation; end
     class UnauthorizedAccessToPrivateDomain < RuntimeError; end
 
     SPACE_NAME_REGEX = /\A[[:alnum:][:punct:][:print:]]+\Z/.freeze
@@ -90,14 +90,15 @@ module VCAP::CloudController
       )
     end
 
-    private
+    def in_suspended_org?
+      organization.suspended?
+    end
 
+    private
     def check_addable!(domain)
       if domain.owning_organization_id && domain.owning_organization_id != organization.id
         raise UnauthorizedAccessToPrivateDomain
       end
     end
-
-
   end
 end

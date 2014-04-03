@@ -6,7 +6,8 @@ module VCAP::CloudController
     let(:stager_pool) { double(:stager_pool, :reserve_app_memory => nil) }
     let(:dea_pool) { double(:dea_pool, :find_dea => "dea-id", :mark_app_started => nil,
                             :reserve_app_memory => nil) }
-    let(:config_hash) { {:config => 'hash'} }
+    let(:staging_timeout) { 320 }
+    let(:config_hash) { { staging: { timeout_in_seconds: staging_timeout } } }
     let(:blobstore_url_generator) { double(:blobstore_url_generator, :droplet_download_url => "download-url") }
 
     before do
@@ -85,13 +86,13 @@ module VCAP::CloudController
       subject { AppObserver.updated(app) }
 
       describe "when the 'diego' flag is set" do
-        let(:config_hash) { { :diego => true } }
+        before { config_hash[:diego] = true }
 
         let(:needs_staging) { true }
 
         it 'uses the diego stager to do staging' do
           DiegoStagerTask.should_receive(:new).
-              with(config_hash,
+              with(staging_timeout,
                    message_bus,
                    app,
                    instance_of(CloudController::Blobstore::UrlGenerator),
@@ -156,7 +157,7 @@ module VCAP::CloudController
               it "raises" do
                 expect {
                   subject
-                }.to raise_error(Errors::AppPackageInvalid)
+                }.to raise_error(Errors::ApiError, /app package is invalid/)
               end
             end
 
@@ -166,7 +167,7 @@ module VCAP::CloudController
               it "raises" do
                 expect {
                   subject
-                }.to raise_error(Errors::AppPackageInvalid)
+                }.to raise_error(Errors::ApiError, /app package is invalid/)
               end
             end
 
@@ -182,13 +183,13 @@ module VCAP::CloudController
                   app.buildpack = "git://example.com/foo/bar.git"
                   app.save
 
-                  App.stub(:custom_buildpacks_enabled?) { false }
+                  allow(app).to receive(:custom_buildpacks_enabled?).and_return(false)
                 end
 
                 it "raises" do
                   expect {
                     subject
-                  }.to raise_error(Errors::CustomBuildpacksDisabled)
+                  }.to raise_error(Errors::ApiError, /Custom buildpacks are disabled/)
                 end
               end
 
@@ -198,7 +199,7 @@ module VCAP::CloudController
                   app.buildpack = "some-admin-buildpack"
                   app.save
 
-                  App.stub(:custom_buildpacks_enabled?) { false }
+                  allow(app).to receive(:custom_buildpacks_enabled?).and_return(false)
                 end
 
                 it_stages
@@ -209,7 +210,7 @@ module VCAP::CloudController
                   app.buildpack = nil
                   app.save
 
-                  App.stub(:custom_buildpacks_enabled?) { false }
+                  allow(app).to receive(:custom_buildpacks_enabled?).and_return(false)
                 end
 
                 it_stages

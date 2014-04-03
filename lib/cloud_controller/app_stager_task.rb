@@ -42,7 +42,7 @@ module VCAP::CloudController
 
     def stage(&completion_callback)
       @stager_id = @stager_pool.find_stager(@app.stack.name, [1024, @app.memory].max)
-      raise Errors::StagingError, "no available stagers" unless @stager_id
+      raise Errors::ApiError.new_from_details("StagingError", "no available stagers") unless @stager_id
 
       subject = "staging.#{@stager_id}.start"
       @multi_message_bus_request = MultiResponseMessageBusRequest.new(@message_bus, subject)
@@ -87,7 +87,8 @@ module VCAP::CloudController
 
     # We never stage if there is not a start request
     def staging_request
-      { :app_id => @app.guid,
+      {
+        :app_id => @app.guid,
         :task_id => task_id,
         :properties => staging_task_properties(@app),
         # All url generation should go to blobstore_url_generator
@@ -105,7 +106,8 @@ module VCAP::CloudController
     def admin_buildpacks
       Buildpack.list_admin_buildpacks.
         select(&:enabled).
-        collect { |buildpack| admin_buildpack_entry(buildpack) }
+        collect { |buildpack| admin_buildpack_entry(buildpack) }.
+        select { |entry| entry[:url] }
     end
 
     def admin_buildpack_entry(buildpack)
@@ -159,7 +161,7 @@ module VCAP::CloudController
     def check_staging_error!(response, error)
       if (msg = error_message(response))
         @app.mark_as_failed_to_stage
-        raise Errors::StagingError, msg
+        raise Errors::ApiError.new_from_details("StagingError", msg)
       end
     end
 
@@ -173,7 +175,7 @@ module VCAP::CloudController
 
     def ensure_staging_is_current!
       unless staging_is_current?
-        raise Errors::StagingError, "failed to stage application: another staging request was initiated"
+        raise Errors::ApiError.new_from_details("StagingError", "failed to stage application: another staging request was initiated")
       end
     end
 
@@ -222,7 +224,7 @@ module VCAP::CloudController
     end
 
     def staging_timeout
-      @config[:staging] && @config[:staging][:max_staging_runtime] || 120
+      @config[:staging][:timeout_in_seconds]
     end
 
     def staging_task_memory_mb

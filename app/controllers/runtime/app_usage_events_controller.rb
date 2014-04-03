@@ -4,6 +4,8 @@ module VCAP::CloudController
 
     get "/v2/app_usage_events", :enumerate
 
+    get "#{path_guid}", :read
+
     post "/v2/app_usage_events/destructively_purge_all_and_reseed_started_apps", :reset
 
     def reset
@@ -20,12 +22,16 @@ module VCAP::CloudController
       [HTTP::NO_CONTENT, nil]
     end
 
+    def self.not_found_exception_name
+      "EventNotFound"
+    end
+
     private
     def get_filtered_dataset_for_enumeration(model, ds, qp, opts)
       after_guid = params["after_guid"]
       if after_guid
         previous_event = AppUsageEvent.find(guid: after_guid)
-        raise Errors::BadQueryParameter, after_guid unless previous_event
+        raise Errors::ApiError.new_from_details("BadQueryParameter", after_guid) unless previous_event
         ds = ds.filter{ id > previous_event.id }
       end
       super(model, ds, qp, opts)

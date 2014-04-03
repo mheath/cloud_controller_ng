@@ -16,6 +16,10 @@ describe 'Sinatra::VCAP' do
 
     vcap_configure :logger_name => 'vcap_spec'
 
+    def in_test_mode?
+      false
+    end
+
     get '/' do
       'ok'
     end
@@ -40,7 +44,7 @@ describe 'Sinatra::VCAP' do
     end
 
     get '/vcap_error' do
-      e = VCAP::Errors::MessageParseError.new('some message')
+      e = VCAP::Errors::ApiError.new_from_details("MessageParseError", 'some message')
       e.set_backtrace(['/vcap:1', '/error:2'])
       raise e
     end
@@ -131,7 +135,6 @@ describe 'Sinatra::VCAP' do
 
   describe 'accessing a route that throws a low level exception' do
     before do
-      TestApp.any_instance.stub(:in_test_mode?).and_return(false)
       Steno.logger('vcap_spec').should_receive(:error).once
       get '/div_0'
     end
@@ -165,7 +168,6 @@ describe 'Sinatra::VCAP' do
 
   describe 'accessing a route that throws a vcap error' do
     before do
-      TestApp.any_instance.stub(:in_test_mode?).and_return(false)
       Steno.logger('vcap_spec').should_receive(:info).once
       get '/vcap_error'
     end
@@ -180,13 +182,11 @@ describe 'Sinatra::VCAP' do
       expect(decoded_response['description']).to eq('Request invalid due to parse error: some message')
 
       expect(decoded_response['error_code']).to eq('CF-MessageParseError')
-      expect(decoded_response['types']).to eq(['MessageParseError', 'Error'])
     end
   end
 
   describe 'accessing a route that throws a StructuredError' do
     before do
-      TestApp.any_instance.stub(:in_test_mode?).and_return(false)
       Steno.logger('vcap_spec').should_receive(:info).once
       get '/structured_error'
     end
@@ -201,10 +201,6 @@ describe 'Sinatra::VCAP' do
       expect(decoded_response['description']).to eq('boring message')
 
       expect(decoded_response['error_code']).to eq('CF-StructuredErrorWithResponseCode')
-      expect(decoded_response['types']).to eq(['StructuredErrorWithResponseCode'])
-
-      # temporarily removed pending security review
-      #expect(decoded_response['source']).to eq('the source')
     end
   end
 

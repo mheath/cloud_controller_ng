@@ -1,3 +1,5 @@
+require "cloud_controller/rest_controller/common_params"
+
 module VCAP::CloudController::RestController
 
   # The base class for all api endpoints.
@@ -39,7 +41,8 @@ module VCAP::CloudController::RestController
       @env     = env
       @params  = params
       @body    = body
-      @opts    = parse_params(params)
+      common_params = CommonParams.new(logger)
+      @opts    = common_params.parse(params)
       @sinatra = sinatra
 
       inject_dependencies(dependencies)
@@ -48,32 +51,6 @@ module VCAP::CloudController::RestController
     # Override this to set dependencies
     #
     def inject_dependencies(dependencies = {})
-    end
-
-    # Parses and sanitizes query parameters from the sinatra request.
-    #
-    # @return [Hash] the parsed parameter hash
-    def parse_params(params)
-      logger.debug "parse_params: #{params}"
-      # Sinatra squshes duplicate query parms into a single entry rather
-      # than an array (which we might have for q)
-      res = {}
-      [ [ "inline-relations-depth", Integer ],
-        [ "page",                   Integer ],
-        [ "results-per-page",       Integer ],
-        [ "q",                      String  ]
-      ].each do |key, klass|
-        val = params[key]
-        res[key.underscore.to_sym] = Object.send(klass.name, val) if val
-      end
-      res
-    end
-
-    def parse_date_param(param)
-      str = @params[param]
-      Time.parse(str).localtime if str
-    rescue
-      raise Errors::BadQueryParameter
     end
 
     # Main entry point for the rest routes.  Acts as the final location
@@ -94,15 +71,14 @@ module VCAP::CloudController::RestController
       check_authentication(op)
       send(op, *args)
     rescue Sequel::ValidationFailed => e
-      logger.error "Validation failed: #{Hashify.exception(e)}"
       raise self.class.translate_validation_exception(e, request_attrs)
     rescue Sequel::DatabaseError => e
       raise self.class.translate_and_log_exception(logger, e)
     rescue JsonMessage::Error => e
       logger.debug("Rescued JsonMessage::Error at #{__FILE__}:#{__LINE__}\n#{e.inspect}\n#{e.backtrace.join("\n")}")
-      raise MessageParseError.new(e)
-    rescue VCAP::CloudController::InvalidRelation => e
-      raise VCAP::Errors::InvalidRelation.new(e)
+      raise VCAP::Errors::ApiError.new_from_details("MessageParseError", e)
+    rescue VCAP::Errors::InvalidRelation => e
+      raise VCAP::Errors::ApiError.new_from_details("InvalidRelation", e)
     end
 
     # Fetch the current active user.  May be nil
@@ -136,9 +112,9 @@ module VCAP::CloudController::RestController
       return if VCAP::CloudController::SecurityContext.admin?
 
       if VCAP::CloudController::SecurityContext.token
-        raise NotAuthorized
+        raise VCAP::Errors::ApiError.new_from_details("NotAuthorized")
       else
-        raise InvalidAuthToken
+        raise VCAP::Errors::ApiError.new_from_details("InvalidAuthToken")
       end
     end
 
@@ -246,7 +222,7 @@ module VCAP::CloudController::RestController
         controller.before path do
           auth = Rack::Auth::Basic::Request.new(env)
           unless auth.provided? && auth.basic? && auth.credentials == block.call
-            raise Errors::NotAuthorized
+            raise Errors::ApiError.new_from_details("NotAuthorized")
           end
         end
       end
@@ -264,7 +240,7 @@ module VCAP::CloudController::RestController
         msg[0] = msg[0] + ":"
         msg.concat(e.backtrace).join("\\n")
         logger.warn(msg.join("\\n"))
-        Errors::InvalidRequest
+        Errors::ApiError.new_from_details("InvalidRequest")
       end
     end
   end

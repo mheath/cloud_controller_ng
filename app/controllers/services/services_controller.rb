@@ -33,14 +33,14 @@ module VCAP::CloudController
       to_many   :service_plans
     end
 
-    query_parameters :active, :label, :provider
+    query_parameters :active, :label, :provider, :service_broker_guid
 
     def self.translate_validation_exception(e, attributes)
       label_provider_errors = e.errors.on([:label, :provider])
       if label_provider_errors && label_provider_errors.include?(:unique)
-        Errors::ServiceLabelTaken.new("#{attributes["label"]}-#{attributes["provider"]}")
+        Errors::ApiError.new_from_details("ServiceLabelTaken", "#{attributes["label"]}-#{attributes["provider"]}")
       else
-        Errors::ServiceInvalid.new(e.errors.full_messages)
+        Errors::ApiError.new_from_details("ServiceInvalid", e.errors.full_messages)
       end
     end
 

@@ -5,7 +5,7 @@ module VCAP::CloudController
     let(:message_bus) { CfMessageBus::MockMessageBus.new }
     let(:stager_pool) { double(:stager_pool, :reserve_app_memory => nil) }
     let(:dea_pool) { double(:stager_pool, :reserve_app_memory => nil) }
-    let(:config_hash) { { :config => 'hash' } }
+    let(:config_hash) { { staging: { timeout_in_seconds: 360 } } }
     let(:app) do
       AppFactory.make(:package_hash => "abc",
         :droplet_hash => nil,
@@ -62,7 +62,7 @@ module VCAP::CloudController
       it 'should raise an error' do
         expect {
           staging_task.stage
-        }.to raise_error(Errors::StagingError, /no available stagers/)
+        }.to raise_error(Errors::ApiError, /no available stagers/)
       end
     end
 
@@ -117,22 +117,16 @@ module VCAP::CloudController
             end
           end
           it "keeps the app as not staged" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to_not change { app.staged? }.from(false)
+            expect { stage }.to_not change { app.staged? }.from(false)
           end
 
           it "does not save the detected buildpack" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to_not change { app.detected_buildpack }.from(nil)
+            expect { stage }.to_not change { app.detected_buildpack }.from(nil)
           end
 
           it "does not call provided callback (not yet)" do
             callback_called = false
-            ignore_error(Errors::StagingError) do
-              stage { callback_called = true }
-            end
+            stage { callback_called = true }
             callback_called.should be_false
           end
         end
@@ -141,35 +135,29 @@ module VCAP::CloudController
           let(:reply_json) { 'invalid-json' }
 
           it "raises a StagingError" do
-            expect {
-              stage
-            }.to raise_error(Errors::StagingError, /failed to stage/)
+            expect { stage }.to raise_error(Errors::ApiError, /failed to stage/)
           end
 
           it "keeps the app as not staged" do
             expect {
-              ignore_error(Errors::StagingError) { stage }
+              ignore_staging_error { stage }
             }.to_not change { app.staged? }.from(false)
           end
 
           it "does not save the detected buildpack" do
             expect {
-              ignore_error(Errors::StagingError) { stage }
+              ignore_staging_error { stage }
             }.to_not change { app.detected_buildpack }.from(nil)
           end
 
           it "does not call provided callback (not yet)" do
             callback_called = false
-            ignore_error(Errors::StagingError) do
-              stage { callback_called = true }
-            end
+            ignore_staging_error { stage { callback_called = true } }
             callback_called.should be_false
           end
 
           it "marks the app as having failed to stage" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to change { app.staging_failed? }.to(true)
+            expect { ignore_staging_error { stage } }.to change { app.staging_failed? }.to(true)
           end
         end
 
@@ -177,33 +165,25 @@ module VCAP::CloudController
           let(:reply_json_error) { "staging failed" }
 
           it "raises a StagingError" do
-            expect { stage }.to raise_error(Errors::StagingError, /failed to stage/)
+            expect { stage }.to raise_error(Errors::ApiError, /failed to stage/)
           end
 
           it "keeps the app as not staged" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to_not change { app.staged? }.from(false)
+            expect { ignore_staging_error { stage } }.to_not change { app.staged? }.from(false)
           end
 
           it "does not save the detected buildpack" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to_not change { app.detected_buildpack }.from(nil)
+            expect { ignore_staging_error { stage } }.to_not change { app.detected_buildpack }.from(nil)
           end
 
           it "does not call provided callback (not yet)" do
             callback_called = false
-            ignore_error(Errors::StagingError) do
-              stage { callback_called = true }
-            end
+            ignore_staging_error { stage { callback_called = true } }
             callback_called.should be_false
           end
 
           it "marks the app as having failed to stage" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to change { app.staging_failed? }.to(true)
+            expect { ignore_staging_error { stage } }.to change { app.staging_failed? }.to(true)
           end
         end
 
@@ -285,14 +265,14 @@ module VCAP::CloudController
               expect {
                 stage
               }.to raise_error(
-                     Errors::StagingError,
+                     Errors::ApiError,
                      /another staging request was initiated/
                    )
             end
 
             it "does not update droplet hash on the app" do
               expect {
-                ignore_error(Errors::StagingError) { stage }
+                ignore_staging_error { stage }
               }.to_not change {
                 app.refresh
                 app.droplet_hash
@@ -301,13 +281,13 @@ module VCAP::CloudController
 
             it "does not save the detected buildpack" do
               expect {
-                ignore_error(Errors::StagingError) { stage }
+                ignore_staging_error { stage }
               }.to_not change { app.detected_buildpack }.from(nil)
             end
 
             it "does not call provided callback" do
               callback_called = false
-              ignore_error(Errors::StagingError) do
+              ignore_staging_error do
                 stage { callback_called = true }
               end
               callback_called.should be_false
@@ -328,28 +308,20 @@ module VCAP::CloudController
           end
 
           it "keeps the app as not staged" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to_not change { app.staged? }.from(false)
+            expect { stage }.to_not change { app.staged? }.from(false)
           end
 
           it "does not save the detected buildpack" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to_not change { app.detected_buildpack }.from(nil)
+            expect { stage }.to_not change { app.detected_buildpack }.from(nil)
           end
 
           it "does not call provided callback (not yet)" do
             callback_called = false
-            ignore_error(Errors::StagingError) do
-              stage { callback_called = true }
-            end
+            stage { callback_called = true }
             callback_called.should be_false
           end
           it "marks the app as having failed to stage" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to change { app.staging_failed? }.to(true)
+            expect { stage }.to change { app.staging_failed? }.to(true)
           end
         end
 
@@ -368,35 +340,29 @@ module VCAP::CloudController
           end
 
           it "keeps the app as not staged" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to_not change { app.staged? }.from(false)
+            expect { stage }.to_not change { app.staged? }.from(false)
           end
 
           it "does not save the detected buildpack" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to_not change { app.detected_buildpack }.from(nil)
+            expect { stage }.to_not change { app.detected_buildpack }.from(nil)
           end
 
           it "does not call provided callback (not yet)" do
             callback_called = false
-            ignore_error(Errors::StagingError) do
-              stage { callback_called = true }
-            end
+            stage { callback_called = true }
             callback_called.should be_false
           end
           it "marks the app as having failed to stage" do
-            expect {
-              ignore_error(Errors::StagingError) { stage }
-            }.to change { app.staging_failed? }.to(true)
+            expect { stage }.to change { app.staging_failed? }.to(true)
           end
         end
       end
 
       describe "reserve app memory" do
         context "when app memory is less when configured minimum_staging_memory_mb" do
-          let(:config_hash) { { :staging => {:minimum_staging_memory_mb => 1025} } }
+          before do
+            config_hash[:staging][:minimum_staging_memory_mb] = 1025
+          end
 
           it "decrement dea's available memory by minimum_staging_memory_mb" do
             dea_pool.should_receive(:reserve_app_memory).with(stager_id, 1025)
@@ -575,6 +541,17 @@ module VCAP::CloudController
               end
             end
           end
+
+          context "when a buildpack has missing bits" do
+            it "does not include the buildpack" do
+              buildpack_d = Buildpack.make(key: "d key", position: 5)
+
+              request = staging_task.staging_request
+              admin_buildpacks = request[:admin_buildpacks]
+              expect(admin_buildpacks).to have(2).items
+              expect(admin_buildpacks).to_not include(key: "d key", url: nil)
+            end
+          end
         end
 
       end
@@ -623,7 +600,8 @@ def stub_schedule_sync(&before_resolve)
   end
 end
 
-def ignore_error(error_class)
+def ignore_staging_error
   yield
-rescue error_class
+rescue VCAP::Errors::ApiError => e
+  raise e unless e.name == "StagingError"
 end

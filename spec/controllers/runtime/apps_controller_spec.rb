@@ -47,7 +47,8 @@ module VCAP::CloudController
     let(:app_event_repository) { CloudController::DependencyLocator.instance.app_event_repository }
 
     describe "create app" do
-      let(:space_guid) { Space.make.guid.to_s }
+      let(:space) { Space.make }
+      let(:space_guid) { space.guid.to_s }
       let(:initial_hash) do
         {
           name: "maria",
@@ -142,11 +143,10 @@ module VCAP::CloudController
         it "records app create" do
           expected_attrs = AppsController::CreateMessage.decode(initial_hash.to_json).extract(stringify_keys: true)
 
-          allow(app_event_repository).to receive(:record_app_create)
+          allow(app_event_repository).to receive(:record_app_create).and_call_original
 
           create_app
-
-          expect(app_event_repository).to have_received(:record_app_create).with(App.last, admin_user, expected_attrs)
+          expect(app_event_repository).to have_received(:record_app_create).with(App.last, admin_user, SecurityContext.current_user_email, expected_attrs)
         end
       end
 
@@ -171,6 +171,18 @@ module VCAP::CloudController
           expect(decoded_response["description"]).to match /is not valid public git url or a known buildpack name/
         end
       end
+
+      context "when the org is suspended" do
+        before do
+          space.organization.update(status: "suspended")
+        end
+
+        it "does not allow user to create new app (spot check)" do
+          post "/v2/apps", Yajl::Encoder.encode(initial_hash), json_headers(headers_for(make_developer_for_space(space)))
+          last_response.status.should == 403
+        end
+      end
+
     end
 
     describe "update app" do
@@ -309,26 +321,31 @@ module VCAP::CloudController
 
         context "when the update succeeds" do
           it "records app update with whitelisted attributes" do
-            allow(app_event_repository).to receive(:record_app_update)
+            allow(app_event_repository).to receive(:record_app_update).and_call_original
 
-            update_app
-
-            expect(app_event_repository).to have_received(:record_app_update) do |recorded_app, recorded_user, recorded_hash|
+            expect(app_event_repository).to receive(:record_app_update) do |recorded_app, user, user_name, attributes|
               expect(recorded_app.guid).to eq(app_obj.guid)
               expect(recorded_app.instances).to eq(2)
-              expect(recorded_user).to eq(admin_user)
-              expect(recorded_hash).to eq({"instances" => 2})
+              expect(user).to eq(admin_user)
+              expect(user_name).to eq(SecurityContext.current_user_email)
+              expect(attributes).to eq({"instances" => 2})
             end
+
+            update_app
           end
         end
 
         context "when the update fails" do
-          before { App.any_instance.stub(:update_from_hash).and_raise("Error saving") }
+          before do
+            allow_any_instance_of(App).to receive(:update_from_hash).and_raise("Error saving")
+            allow(app_event_repository).to receive(:record_app_update)
+          end
 
           it "does not record app update" do
-            expect(app_event_repository).not_to receive(:record_app_update)
+            update_app
 
-            expect { update_app }.to raise_error
+            expect(app_event_repository).to_not have_received(:record_app_update)
+            expect(last_response.status).to eq(500)
           end
         end
       end
@@ -448,19 +465,19 @@ module VCAP::CloudController
 
       describe "events" do
         it "records an app delete-request" do
-          allow(app_event_repository).to receive(:record_app_delete_request)
+          allow(app_event_repository).to receive(:record_app_delete_request).and_call_original
 
           delete_app
 
-          expect(app_event_repository).to have_received(:record_app_delete_request).with(app_obj, admin_user, false)
+          expect(app_event_repository).to have_received(:record_app_delete_request).with(app_obj, admin_user, SecurityContext.current_user_email, false)
         end
 
         it "records the recursive query parameter when recursive"  do
-          allow(app_event_repository).to receive(:record_app_delete_request)
+          allow(app_event_repository).to receive(:record_app_delete_request).and_call_original
 
           delete "/v2/apps/#{app_obj.guid}?recursive=true", {}, json_headers(admin_headers)
 
-          expect(app_event_repository).to have_received(:record_app_delete_request).with(app_obj, admin_user, true)
+          expect(app_event_repository).to have_received(:record_app_delete_request).with(app_obj, admin_user, SecurityContext.current_user_email, true)
         end
       end
     end

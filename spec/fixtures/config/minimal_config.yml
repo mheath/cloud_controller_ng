@@ -41,6 +41,12 @@ bulk_api:
   auth_user: bulk_user
   auth_password: bulk_password
 
+staging:
+  timeout_in_seconds: 120
+  auth:
+    user: user
+    password: password
+
 cc_partition: ng
 
 nginx:
@@ -52,7 +58,6 @@ quota_definitions:
     non_basic_services_allowed: true
     total_services: 100
     total_routes: 1000
-    trial_db_allowed: true
     memory_limit: 10240
 
   small:
@@ -76,8 +81,6 @@ droplets:
     provider: Local
 
 db_encryption_key: some-key
-
-hm9000_noop: true
 
 loggregator:
   router: "127.0.0.1:8080"

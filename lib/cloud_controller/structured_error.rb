@@ -9,7 +9,6 @@ class StructuredError < StandardError
   def to_h
     {
       'description' => message,
-      'types' => Hashify.types(self),
       'backtrace' => backtrace,
       'source' => hashify(source),
     }
@@ -23,7 +22,10 @@ class StructuredError < StandardError
     elsif source.respond_to?(:to_hash)
       source.to_hash
     elsif source.is_a?(Exception)
-      Hashify.exception(source)
+      {
+        'description' => source.message,
+        'backtrace' => source.backtrace,
+      }
     else
       source.to_s
     end

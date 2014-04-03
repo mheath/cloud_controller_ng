@@ -69,10 +69,10 @@ module VCAP::CloudController
           :auth_password => String,
         },
 
-        optional(:staging) => {
-          optional(:max_staging_runtime) => Fixnum,
+        :staging => {
+          :timeout_in_seconds => Fixnum,
           optional(:minimum_staging_memory_mb) => Fixnum,
-          optional(:auth) => {
+          :auth => {
             :user => String,
             :password => String,
           }
@@ -114,26 +114,20 @@ module VCAP::CloudController
         },
 
         :packages => {
-          optional(:max_droplet_size) => Integer,
+          optional(:max_package_size) => Integer,
           optional(:app_package_directory_key) => String,
           :fog_connection => Hash
         },
 
         :droplets => {
-          optional(:max_droplet_size) => Integer,
           optional(:droplet_directory_key) => String,
           :fog_connection => Hash
         },
 
         :db_encryption_key => String,
 
-        optional(:trial_db) => {
-          :guid => String,
-        },
-
         optional(:tasks_disabled) => bool,
 
-        optional(:hm9000_noop) => bool,
         optional(:flapping_crash_count_threshold) => Integer,
 
         optional(:varz_port) => Integer,
@@ -155,6 +149,18 @@ module VCAP::CloudController
         },
 
         optional(:request_timeout_in_seconds) => Integer,
+        optional(:skip_cert_verify) => bool,
+
+        optional(:install_buildpacks) => [
+          {
+            "name" => String,
+            optional("package") => String,
+            optional("file") => String,
+            optional("enabled") => bool,
+            optional("locked") => bool,
+            optional("position") => Integer,
+          }
+        ]
       }
     end
 
@@ -175,8 +181,6 @@ module VCAP::CloudController
 
         QuotaDefinition.configure(config)
         Stack.configure(config[:stacks_file])
-        ServicePlan.configure(config[:trial_db])
-        App.configure(!config[:disable_custom_buildpacks])
 
         run_initializers(config)
       end
@@ -198,7 +202,6 @@ module VCAP::CloudController
         @config_dir ||= File.expand_path("../../../config", __FILE__)
       end
 
-
       def run_initializers(config)
         return if @initialized
 
@@ -216,6 +219,7 @@ module VCAP::CloudController
         config[:request_timeout_in_seconds] ||= 300
         config[:directories] ||= {}
         config[:billing_event_writing_enabled] = true if config[:billing_event_writing_enabled].nil?
+        config[:skip_cert_verify] = false if config[:skip_cert_verify].nil?
         config
       end
     end

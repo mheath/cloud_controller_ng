@@ -23,22 +23,19 @@ describe AppBitsPackage do
     CloudController::Blobstore::Client.new({provider: "Local", local_root: blobstore_dir}, "package")
   end
 
-  let(:packer) { AppBitsPackage.new(package_blobstore, global_app_bits_cache, max_droplet_size, local_tmp_dir) }
-  let(:max_droplet_size) { 1_073_741_824 }
+  let(:packer) { AppBitsPackage.new(package_blobstore, global_app_bits_cache, max_package_size, local_tmp_dir) }
+  let(:max_package_size) { 1_073_741_824 }
 
-  around do |example|
-    begin
-      Fog.unmock!
-      example.call
-    ensure
-      Fog.mock!
-      FileUtils.remove_entry_secure local_tmp_dir
-      FileUtils.remove_entry_secure blobstore_dir
-    end
-  end
 
   before do
+    Fog.unmock!
     FileUtils.stub(:rm_f).with(compressed_path)
+  end
+
+  after do
+    Fog.mock!
+    FileUtils.remove_entry_secure local_tmp_dir
+    FileUtils.remove_entry_secure blobstore_dir
   end
 
   describe "#create" do
@@ -90,12 +87,12 @@ describe AppBitsPackage do
     end
 
     context "when the app bits are too large" do
-      let(:max_droplet_size) { 10 }
+      let(:max_package_size) { 10 }
 
       it "raises an exception" do
         expect {
           create
-        }.to raise_exception VCAP::Errors::AppPackageInvalid, /package.+larger/i
+        }.to raise_exception VCAP::Errors::ApiError, /package.+larger/i
       end
 
       it "removes the compressed path afterwards" do
@@ -105,7 +102,7 @@ describe AppBitsPackage do
     end
 
     context "when the max droplet size is not configured" do
-      let(:max_droplet_size) { nil }
+      let(:max_package_size) { nil }
 
       it "always accepts any droplet size" do
         fingerprints_in_app_cache = CloudController::Blobstore::FingerprintsCollection.new(
