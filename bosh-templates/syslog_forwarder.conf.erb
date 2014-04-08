@@ -60,6 +60,11 @@ $ModLoad omrelp
 <% end %>
 
 <% end.else do %>
+
+<% if_p("syslog_aggregator.envision_address", "syslog_aggregator.envision_port") do |envision_address, envision_port| %>
+*.* @<%= envision_address %>:<%= envision_port %>;CfLogTemplate
+<% end %>
+
 # Prevent them from reaching anywhere else
 :programname, startswith, "vcap." ~
 <% end %>
