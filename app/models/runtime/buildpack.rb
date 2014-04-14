@@ -1,71 +1,75 @@
+require "cloud_controller/buildpack_positioner"
+require "cloud_controller/buildpack_shifter"
+
 module VCAP::CloudController
   class Buildpack < Sequel::Model
-
     export_attributes :name, :position, :enabled, :locked, :filename
-
-    import_attributes :name, :key, :position, :enabled, :locked, :filename
+    import_attributes :name, :position, :enabled, :locked, :filename, :key
 
     def self.list_admin_buildpacks
-      results = exclude(:key => nil).exclude(:key => "").order(:position).all
-      index_of_first_prioritized_position = results.find_index { |result| result.position > 0 }
-
-      if index_of_first_prioritized_position
-        results = results[index_of_first_prioritized_position..-1] + results.take(index_of_first_prioritized_position)
-      end
-
-      results
+      exclude(:key => nil).exclude(:key => "").order(:position).all
     end
 
     def self.at_last_position
       where(position: max(:position)).first
     end
 
-    def self.create(values = {}, &block)
-      last = Buildpack.at_last_position
+    def self.locked_last_position
+      last = at_last_position
+      last.lock!
+      last.position
+    end
 
-      if last
-        db.transaction(savepoint: true) do
-          last.lock!
+    def self.create(new_attributes = {}, &block)
+      new_attributes = new_attributes.symbolize_keys # Unfortunately we aren't consistent with whether we use
+                                                     # strings or symbols for keys so we need to be defensive.
 
-          buildpack = new(values, &block)
-
-          target_position = determine_position(buildpack, last)
-
-          if target_position <= last.position
-            shift_positions_up(target_position)
-          end
-
-          buildpack.update(position: target_position)
-        end
-      else
-        super(values) do |instance|
+      if Buildpack.at_last_position.nil?
+        super(new_attributes) do |instance|
           block.yield(instance) if block
           instance.position = 1
         end
+      else
+        db.transaction(savepoint: true) do
+          buildpack = Buildpack.new(new_attributes, &block)
+          positioner = BuildpackPositioner.new
+          normalized_position = positioner.position_for_create(buildpack.position)
+
+          buildpack.position = normalized_position
+          buildpack.save
+        end
       end
     end
 
-    def self.update(obj, values = {})
-      attrs = values.dup
-      target_position = attrs.delete("position")
+    def self.update(buildpack, updated_attributes = {})
+      updated_attributes = updated_attributes.symbolize_keys # Unfortunately we aren't consistent with whether we use
+                                                             # strings or symbols for keys so we need to be defensive.
       db.transaction(savepoint: true) do
-        obj.lock!
-        obj.update_from_hash(attrs)
-        if target_position
-          target_position = 1 if target_position < 1
-          obj.shift_to_position(target_position)
+        buildpack.lock!
+
+        normalized_attributes = if updated_attributes.has_key?(:position)
+          positioner = BuildpackPositioner.new
+          normalized_position = positioner.position_for_update(buildpack.position, updated_attributes[:position])
+          updated_attributes.merge(position: normalized_position)
+        else
+          updated_attributes
         end
+
+        buildpack.update_from_hash(normalized_attributes)
       end
-      obj
+
+      buildpack
+    end
+
+    def self.user_visibility_filter(user)
+      full_dataset_filter
     end
 
     def after_destroy
-      shift_positions_down()
       super
-    end
 
-    def staging_message
-      { buildpack_key: self.key }
+      shifter = BuildpackShifter.new
+      shifter.shift_positions_down(self)
     end
 
     def validate
@@ -73,77 +77,20 @@ module VCAP::CloudController
       validates_format(/^(\w|\-)+$/, :name, message: "name can only contain alphanumeric characters")
     end
 
-    def self.user_visibility_filter(user)
-      full_dataset_filter
+    def locked?
+      !!locked
+    end
+
+    def staging_message
+      {buildpack_key: self.key}
     end
 
     def to_json
       Yajl::Encoder.encode name
     end
 
-
     def custom?
       false
     end
-
-    def locked?
-      self.locked
-    end
-
-    def shift_to_position(target_position)
-      return if target_position == position
-      target_position = 1 if target_position < 1
-
-      db.transaction(savepoint: true) do
-        last = Buildpack.at_last_position
-        if last
-          last.lock!
-          last_position = last.position
-          target_position = last_position if target_position > last_position
-          shift_and_update_positions(target_position) if target_position != position
-        else
-          update(position: 1)
-        end
-      end
-    end
-
-    private
-
-    def self.determine_position(buildpack, last)
-      position = buildpack.position
-      if !position || position > last.position
-        position = last.position + 1
-      elsif position < 1
-        position = 1
-      end
-      position
-    end
-
-    def shift_positions_down
-      Buildpack.for_update.where('position > ?', position).update(position: Sequel.-(:position, 1))
-    end
-
-    def self.shift_positions_up(position)
-      for_update.where('position >= ?', position).update(position: Sequel.+(:position, 1))
-    end
-
-    def shift_and_update_positions(target_position)
-      if target_position > position
-        Buildpack.shift_positions_down_between(position, target_position)
-      elsif target_position < position
-        Buildpack.shift_positions_up_between(target_position, position)
-      end
-
-      update(position: target_position)
-    end
-
-    def self.shift_positions_up_between(low, high)
-      for_update.where {position >= low}.and{position < high}.update(position: Sequel.+(:position, 1))
-    end
-
-    def self.shift_positions_down_between(low, high)
-      for_update.where {position > low}.and{position <= high}.update(position: Sequel.-(:position, 1))
-    end
-
   end
 end

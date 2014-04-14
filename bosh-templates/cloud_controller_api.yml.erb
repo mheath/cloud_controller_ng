@@ -170,6 +170,7 @@ resource_pool:
 
 packages:
   app_package_directory_key: <%= p("ccng.packages.app_package_directory_key") %>
+  max_package_size: <%= p("ccng.packages.max_package_size") %>
   <% if_p("ccng.packages.cdn") do %>
   cdn:
     uri: <%= p("ccng.packages.cdn.uri") %>
@@ -222,3 +223,5 @@ diego: <%= p("ccng.diego") %>
 <% if_p("ssl.skip_cert_verify") do |skip_cert_verify|%>
 skip_cert_verify: <%= skip_cert_verify %>
 <% end %>
+
+install_buildpacks: <%= p("ccng.install_buildpacks", []).to_yaml.gsub("---", "") %>
