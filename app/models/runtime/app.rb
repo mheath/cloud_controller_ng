@@ -25,7 +25,7 @@ module VCAP::CloudController
     default_order_by :name
 
     export_attributes :name, :production,
-      :space_guid, :stack_guid, :buildpack, :detected_buildpack, :detected_buildpack_guid,
+      :space_guid, :stack_guid, :buildpack, :detected_buildpack,
       :environment_json, :memory, :instances, :disk_quota,
       :state, :version, :command, :console, :debug,
       :staging_task_id, :package_state, :health_check_timeout
@@ -412,17 +412,6 @@ module VCAP::CloudController
 
     def custom_buildpack_url
       buildpack.url if buildpack.custom?
-    end
-
-    def buildpack_guid
-      return admin_buildpack.guid if admin_buildpack
-      detected_buildpack_guid
-    end
-
-    def buildpack_name
-      current_buildpack = Buildpack.find(guid: buildpack_guid)
-      return nil unless current_buildpack
-      current_buildpack.name
     end
 
     def package_hash=(hash)

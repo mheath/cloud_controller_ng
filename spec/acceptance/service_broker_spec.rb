@@ -5,7 +5,6 @@ describe 'Service Broker' do
   before(:all) { setup_cc }
   after(:all) { $spec_env.reset_database_with_seeds }
 
-
   def build_service(attrs={})
     @index ||= 0
     @index += 1
@@ -130,7 +129,7 @@ describe 'Service Broker' do
         expect(decoded_response['description']).to eql(
           "Service broker catalog is invalid: \n" +
             "Service ids must be unique\n" +
-            "Service dashboard_client ids must be unique\n" +
+            "Service dashboard_client id must be unique\n" +
             "Service service-1\n" +
             "  Service id must be a string, but has value 12345\n" +
             "Service service-2\n" +
@@ -190,18 +189,54 @@ describe 'Service Broker' do
         expect(not_free_plan['entity']['free']).to be_false
       end
     end
+
+    context 'when the CC dashboard_client feature is disabled and the catalog requests a client' do
+      let(:service) { build_service(dashboard_client: { id: 'client-id', secret: 'shhhhh', redirect_uri: 'http://example.com/client-id' })}
+
+      before do
+        allow(VCAP::CloudController::Config.config).to receive(:[]).with(anything).and_call_original
+        allow(VCAP::CloudController::Config.config).to receive(:[]).with(:uaa_client_name).and_return nil
+        allow(VCAP::CloudController::Config.config).to receive(:[]).with(:uaa_client_secret).and_return nil
+
+        stub_catalog_fetch(200, services: [service])
+      end
+
+      it 'returns a warning' do
+        post('/v2/service_brokers', {
+          name: 'some-guid',
+          broker_url: 'http://broker-url',
+          auth_username: 'username',
+          auth_password: 'password'
+        }.to_json, json_headers(admin_headers))
+
+        warning = CGI.unescape(last_response.headers['X-Cf-Warnings'])
+        expect(warning).to eq('Warning: This broker includes configuration for a dashboard client. Auto-creation of OAuth2 clients has been disabled in this Cloud Foundry instance. The broker catalog has been updated but its dashboard client configuration will be ignored.')
+      end
+
+      it 'does not create any dashboard clients' do
+        post('/v2/service_brokers', {
+          name: 'some-guid',
+          broker_url: 'http://broker-url',
+          auth_username: 'username',
+          auth_password: 'password'
+        }.to_json, json_headers(admin_headers))
+
+        expect(VCAP::CloudController::ServiceDashboardClient.count).to eq(0)
+      end
+
+    end
   end
 
   describe 'updating a service broker' do
     context 'when the dashboard_client values for a service have changed' do
-      before do
-        service_1 = build_service(dashboard_client: {id: 'client-1', secret: 'shhhhh', redirect_uri: 'http://example.com/client-1'})
-        service_2 = build_service(dashboard_client: {id: 'client-2', secret: 'sekret', redirect_uri: 'http://example.com/client-2'})
-        service_3 = build_service(dashboard_client: {id: 'client-3', secret: 'unguessable', redirect_uri: 'http://example.com/client-3'})
-        service_4 = build_service
-        service_5 = build_service(dashboard_client: {id: 'client-5', secret: 'secret5', redirect_uri: 'http://example.com/client-5'})
-        service_6 = build_service(dashboard_client: {id: 'client-6', secret: 'secret6', redirect_uri: 'http://example.com/client-6'})
+      let(:service_1) { build_service(dashboard_client: { id: 'client-1', secret: 'shhhhh', redirect_uri: 'http://example.com/client-1' }) }
+      let(:service_2) { build_service(dashboard_client: { id: 'client-2', secret: 'sekret', redirect_uri: 'http://example.com/client-2' }) }
+      let(:service_3) { build_service(dashboard_client: { id: 'client-3', secret: 'unguessable', redirect_uri: 'http://example.com/client-3' }) }
+      let(:service_4) { build_service }
+      let(:service_5) { build_service(dashboard_client: { id: 'client-5', secret: 'secret5', redirect_uri: 'http://example.com/client-5' }) }
+      let(:service_6) { build_service(dashboard_client: { id: 'client-6', secret: 'secret6', redirect_uri: 'http://example.com/client-6' }) }
 
+      before do
         # set up a fake broker catalog that includes dashboard_client for services
         stub_catalog_fetch(200, services: [service_1, service_2, service_3, service_4, service_5, service_6])
         setup_uaa_stubs_to_add_new_client
@@ -220,6 +255,31 @@ describe 'Service Broker' do
         expect(last_response).to have_status_code(201)
         @service_broker_guid = decoded_response.fetch('metadata').fetch('guid')
 
+        WebMock.reset!
+
+        setup_uaa_stubs_to_add_new_client
+        stub_request(:get, %r{http://localhost:8080/uaa/oauth/clients/.*}).to_return(status: 404)
+        stub_request(:get, %r{http://localhost:8080/uaa/oauth/clients/client-1}).to_return(
+          body:    { client_id: 'client-1' }.to_json,
+          status:  200,
+          headers: { 'content-type' => 'application/json' })
+        stub_request(:get, %r{http://localhost:8080/uaa/oauth/clients/client-2}).to_return(
+          body:    { client_id: 'client-2' }.to_json,
+          status:  200,
+          headers: { 'content-type' => 'application/json' })
+        stub_request(:get, %r{http://localhost:8080/uaa/oauth/clients/client-3}).to_return(
+          body:    { client_id: 'client-3' }.to_json,
+          status:  200,
+          headers: { 'content-type' => 'application/json' })
+        stub_request(:get, %r{http://localhost:8080/uaa/oauth/clients/client-5}).to_return(
+          body:    { client_id: 'client-5' }.to_json,
+          status:  200,
+          headers: { 'content-type' => 'application/json' })
+        stub_request(:get, %r{http://localhost:8080/uaa/oauth/clients/client-6}).to_return(
+          body:    { client_id: 'client-6' }.to_json,
+          status:  200,
+          headers: { 'content-type' => 'application/json' })
+
         # delete client
         service_1.delete(:dashboard_client)
         # change client id - should result in a delete and a create
@@ -233,7 +293,7 @@ describe 'Service Broker' do
 
         stub_catalog_fetch(200, services: [service_1, service_2, service_3, service_4, service_5, service_6])
 
-        stub_request(:delete, %r{http://localhost:8080/uaa/oauth/clients/.*}).
+        stub_request(:post, %r{http://localhost:8080/uaa/oauth/clients/tx/modify}).
           to_return(
           status: 200,
           headers: {'content-type' => 'application/json'},
@@ -241,69 +301,75 @@ describe 'Service Broker' do
         )
       end
 
-      it 'returns success' do
-        put("/v2/service_brokers/#{@service_broker_guid}", '{}', json_headers(admin_headers))
-
-        expect(last_response).to have_status_code(200)
-      end
-
-      it 'deletes removed clients' do
-        put("/v2/service_brokers/#{@service_broker_guid}", '{}', json_headers(admin_headers))
-
-        expect(a_request(:delete, 'http://localhost:8080/uaa/oauth/clients/client-1')).to have_been_made
-
-        expect(a_request(:delete, 'http://localhost:8080/uaa/oauth/clients/client-2')).to have_been_made
-        expect(
-          a_request(:post, 'http://localhost:8080/uaa/oauth/clients').with(
-            body: hash_including('client_id' => 'different-client', 'client_secret' => 'sekret')
-          )
-        ).to have_been_made
-      end
-
-      it 'creates new clients and clients with updated ids' do
+      it 'sends the correct batch request to create/update/delete clients' do
         put("/v2/service_brokers/#{@service_broker_guid}", '{}', json_headers(admin_headers))
 
         expect(last_response).to have_status_code(200)
 
-        expect(
-          a_request(:post, 'http://localhost:8080/uaa/oauth/clients').with(
-            body: hash_including('client_id' => 'different-client', 'client_secret' => 'sekret')
-          )
-        ).to have_been_made
+        expected_client_modifications = [
+          { # client deleted
+            'client_id'              => 'client-1',
+            'client_secret'          => nil,
+            'redirect_uri'           => nil,
+            'scope'                  => ['openid', 'cloud_controller.read', 'cloud_controller.write'],
+            'authorized_grant_types' => ['authorization_code'],
+            'action'                 => 'delete'
+          },
+          { # client id renamed to 'different-client'
+            'client_id'              => 'client-2',
+            'client_secret'          => nil,
+            'redirect_uri'           => nil,
+            'scope'                  => ['openid', 'cloud_controller.read', 'cloud_controller.write'],
+            'authorized_grant_types' => ['authorization_code'],
+            'action'                 => 'delete'
+          },
+          { # client id renamed from 'client-2'
+            'client_id'              => 'different-client',
+            'client_secret'          => service_2[:dashboard_client][:secret],
+            'redirect_uri'           => service_2[:dashboard_client][:redirect_uri],
+            'scope'                  => ['openid', 'cloud_controller.read', 'cloud_controller.write'],
+            'authorized_grant_types' => ['authorization_code'],
+            'action'                 => 'add'
+          },
+          { # client secret updated
+            'client_id'              => service_3[:dashboard_client][:id],
+            'client_secret'          => 'SUPERsecret',
+            'redirect_uri'           => service_3[:dashboard_client][:redirect_uri],
+            'scope'                  => ['openid', 'cloud_controller.read', 'cloud_controller.write'],
+            'authorized_grant_types' => ['authorization_code'],
+            'action'                 => 'update,secret'
+          },
+          { # newly added client
+            'client_id'              => service_4[:dashboard_client][:id],
+            'client_secret'          => service_4[:dashboard_client][:secret],
+            'redirect_uri'           => service_4[:dashboard_client][:redirect_uri],
+            'scope'                  => ['openid', 'cloud_controller.read', 'cloud_controller.write'],
+            'authorized_grant_types' => ['authorization_code'],
+            'action'                 => 'add'
+          },
+          { # client redirect_uri updated
+            'client_id'              => service_5[:dashboard_client][:id],
+            'client_secret'          => service_5[:dashboard_client][:secret],
+            'redirect_uri'           => 'http://nowhere.net',
+            'scope'                  => ['openid', 'cloud_controller.read', 'cloud_controller.write'],
+            'authorized_grant_types' => ['authorization_code'],
+            'action'                 => 'update,secret'
+          },
+          { # no change
+            'client_id'              => service_6[:dashboard_client][:id],
+            'client_secret'          => service_6[:dashboard_client][:secret],
+            'redirect_uri'           => service_6[:dashboard_client][:redirect_uri],
+            'scope'                  => ['openid', 'cloud_controller.read', 'cloud_controller.write'],
+            'authorized_grant_types' => ['authorization_code'],
+            'action'                 => 'update,secret'
+          }
+        ]
 
-        expect(
-          a_request(:post, 'http://localhost:8080/uaa/oauth/clients').with(
-            body: hash_including('client_id' => 'client-4', 'client_secret' => '1337')
-          )
-        ).to have_been_made
-      end
+        a_request(:post, 'http://localhost:8080/uaa/oauth/clients/tx/modify').with do |req|
+          client_modifications = JSON.parse(req.body)
+          expect(client_modifications).to match_array(expected_client_modifications)
+        end.should have_been_made
 
-      it 'updates changed properties of clients' do
-        put("/v2/service_brokers/#{@service_broker_guid}", '{}', json_headers(admin_headers))
-
-        expect(
-          a_request(:delete, 'http://localhost:8080/uaa/oauth/clients/client-5')
-        ).to have_been_made
-
-        expect(
-          a_request(:post, 'http://localhost:8080/uaa/oauth/clients').with(
-            body: hash_including('client_id' => 'client-5', 'redirect_uri' => 'http://nowhere.net')
-          )
-        ).to have_been_made
-      end
-
-      it 'updates the secret' do
-        put("/v2/service_brokers/#{@service_broker_guid}", '{}', json_headers(admin_headers))
-
-        expect(
-          a_request(:delete, 'http://localhost:8080/uaa/oauth/clients/client-3')
-        ).to have_been_made
-
-        expect(
-          a_request(:post, 'http://localhost:8080/uaa/oauth/clients').with(
-            body: hash_including('client_id' => 'client-3', 'client_secret' => 'SUPERsecret')
-          )
-        ).to have_been_made
       end
     end
 
@@ -381,10 +447,11 @@ describe 'Service Broker' do
 
   describe 'deleting a service broker' do
     context 'when broker has dashboard clients' do
+      let(:service_1) { build_service(dashboard_client: { id: 'client-1', secret: 'shhhhh', redirect_uri: service_1 = 'http://example.com/client-1' }) }
+      let(:service_2) { build_service(dashboard_client: { id: 'client-2', secret: 'sekret', redirect_uri: 'http://example.com/client-2' }) }
+      let(:service_3) { build_service }
+
       before do
-        service_1 = build_service(dashboard_client: {id: 'client-1', secret: 'shhhhh', redirect_uri: 'http://example.com/client-1'})
-        service_2 = build_service(dashboard_client: {id: 'client-2', secret: 'sekret', redirect_uri: 'http://example.com/client-2'})
-        service_3 = build_service
 
         # set up a fake broker catalog that includes dashboard_client for services
         stub_catalog_fetch(200, services: [service_1, service_2, service_3])
@@ -404,7 +471,16 @@ describe 'Service Broker' do
         expect(last_response).to have_status_code(201)
         @service_broker_guid = decoded_response.fetch('metadata').fetch('guid')
 
-        stub_request(:delete, %r{http://localhost:8080/uaa/oauth/clients/.*}).
+        stub_request(:get, %r{http://localhost:8080/uaa/oauth/clients/client-1}).to_return(
+          body:    { client_id: 'client-1' }.to_json,
+          status:  200,
+          headers: { 'content-type' => 'application/json' })
+        stub_request(:get, %r{http://localhost:8080/uaa/oauth/clients/client-2}).to_return(
+          body:    { client_id: 'client-2' }.to_json,
+          status:  200,
+          headers: { 'content-type' => 'application/json' })
+
+        stub_request(:post, %r{http://localhost:8080/uaa/oauth/clients/tx/modify}).
           to_return(
           status: 200,
           headers: {'content-type' => 'application/json'},
@@ -416,8 +492,28 @@ describe 'Service Broker' do
         delete("/v2/service_brokers/#{@service_broker_guid}", '', json_headers(admin_headers))
         expect(last_response).to have_status_code(204)
 
-        expect(a_request(:delete, 'http://localhost:8080/uaa/oauth/clients/client-1')).to have_been_made
-        expect(a_request(:delete, 'http://localhost:8080/uaa/oauth/clients/client-2')).to have_been_made
+        expected_json_body = [
+          {
+            client_id:              service_1[:dashboard_client][:id],
+            client_secret:          nil,
+            redirect_uri:           nil,
+            scope:                  ['openid', 'cloud_controller.read', 'cloud_controller.write'],
+            authorized_grant_types: ['authorization_code'],
+            action:                 'delete'
+          },
+          {
+            client_id:              service_2[:dashboard_client][:id],
+            client_secret:          nil,
+            redirect_uri:           nil,
+            scope:                  ['openid', 'cloud_controller.read', 'cloud_controller.write'],
+            authorized_grant_types: ['authorization_code'],
+            action:                 'delete'
+          }
+        ].to_json
+
+        a_request(:post, 'http://localhost:8080/uaa/oauth/clients/tx/modify').with(
+          body:  expected_json_body
+        ).should have_been_made
       end
     end
   end

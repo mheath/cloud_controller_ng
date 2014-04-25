@@ -7,8 +7,6 @@ message_bus_servers:
 
 external_domain: api2.vcap.me
 
-bootstrap_admin_email: sre@vmware.com
-
 system_domain_organization: the-system_domain-org-name
 system_domain: vcap.me
 app_domains:
@@ -74,6 +72,7 @@ staging:
   # Max duration for staging process
   timeout_in_seconds: 120 # secs
   minimum_staging_memory_mb: 1024
+  minimum_staging_disk_mb: 4096
   auth:
     user: zxsfhgjg
     password: ZNVfdase9

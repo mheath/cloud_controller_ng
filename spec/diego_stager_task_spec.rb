@@ -24,10 +24,21 @@ module VCAP::CloudController
                       :environment_json => environment_json
       )
     end
-    let(:blobstore_url_generator) { CloudController::DependencyLocator.instance.blobstore_url_generator }
+    let(:blobstore_url_generator) { double("fake url generator") }
     let(:completion_callback) { lambda {|x| return x } }
 
+    let(:app_package_download_url) { "http://app-package.com" }
+    let(:admin_buildpack_download_url) { "http://admin-buildpack.com" }
+    let(:build_artifacts_cache_download_uri) { "http://buildpack-artifacts-cache.com" }
+
     before do
+      Buildpack.create(name: "the_java_buildpack", key: "java", position: 1)
+      Buildpack.create(name: "the_ruby_buildpack", key: "ruby", position: 2)
+
+      allow(blobstore_url_generator).to receive(:app_package_download_url).and_return(app_package_download_url)
+      allow(blobstore_url_generator).to receive(:admin_buildpack_download_url).and_return(admin_buildpack_download_url)
+      allow(blobstore_url_generator).to receive(:buildpack_cache_download_url).and_return(build_artifacts_cache_download_uri)
+
       EM.stub(:add_timer)
       EM.stub(:defer).and_yield
     end
@@ -210,16 +221,78 @@ module VCAP::CloudController
         end
       end
 
+      describe "buildpacks" do
+        context "when the app has a GitBasedBuildpack" do
+          context "when the GitBasedBuildpack uri begins with http(s)://" do
+            before do
+              app.buildpack = "http://github.com/mybuildpack/bp.zip"
+            end
+
+            it "should use the GitBasedBuildpack's uri and name it 'custom'" do
+              expect(diego_stager_task.staging_request[:buildpacks]).to eq([{key: "custom", url: "http://github.com/mybuildpack/bp.zip"}])
+            end
+          end
+
+          context "when the GitBasedBuildpack uri begins with git://" do
+            before do
+              app.buildpack = "git://github.com/mybuildpack/bp"
+            end
+
+            it "should use the list of admin buildpacks" do
+              expect(diego_stager_task.staging_request[:buildpacks]).to eq([
+                    {key: "java", url: admin_buildpack_download_url},
+                    {key: "ruby", url: admin_buildpack_download_url},
+              ])
+            end
+          end
+
+          context "when the GitBasedBuildpack uri ends with .git" do
+            before do
+              app.buildpack = "https://github.com/mybuildpack/bp.git"
+            end
+
+            it "should use the list of admin buildpacks" do
+              expect(diego_stager_task.staging_request[:buildpacks]).to eq([
+                                                                               {key: "java", url: admin_buildpack_download_url},
+                                                                               {key: "ruby", url: admin_buildpack_download_url},
+                                                                           ])
+            end
+          end
+        end
+
+        context "when the app has a named buildpack" do
+          before do
+            app.buildpack = "the_java_buildpack"
+          end
+
+          it "should use that buildpack" do
+            expect(diego_stager_task.staging_request[:buildpacks]).to eq([
+                {key: "java", url: admin_buildpack_download_url},
+            ])
+
+          end
+        end
+
+        context "when the app has no buildpack specified" do
+          it "should use the list of admin buildpacks" do
+            expect(diego_stager_task.staging_request[:buildpacks]).to eq([
+              {key: "java", url: admin_buildpack_download_url},
+              {key: "ruby", url: admin_buildpack_download_url},
+            ])
+          end
+        end
+      end
+
       describe "environment" do
         it "contains user defined environment variables" do
-          expect(diego_stager_task.staging_request[:environment].last).to eq(["USER_DEFINED","OK"])
+          expect(diego_stager_task.staging_request[:environment].last).to eq({key:"USER_DEFINED", value:"OK"})
         end
 
         it "contains VCAP_APPLICATION from application" do
           expect(app.vcap_application).to be
           expect(
             diego_stager_task.staging_request[:environment]
-          ).to include(["VCAP_APPLICATION", app.vcap_application.to_json])
+          ).to include({key:"VCAP_APPLICATION", value:app.vcap_application.to_json})
         end
 
         it "contains VCAP_SERVICES" do
@@ -245,32 +318,30 @@ module VCAP::CloudController
           }
           expect(
             diego_stager_task.staging_request[:environment]
-          ).to include(["VCAP_SERVICES", expected_hash.to_json])
+          ).to include({key:"VCAP_SERVICES", value:expected_hash.to_json})
         end
 
         it "contains DATABASE_URL" do
           expect(
             diego_stager_task.staging_request[:environment]
-          ).to include(["DATABASE_URL", "mysql2://giraffes.rock"])
+          ).to include({key:"DATABASE_URL", value:"mysql2://giraffes.rock"})
         end
 
         it "contains MEMORY_LIMIT" do
           expect(
             diego_stager_task.staging_request[:environment]
-          ).to include(["MEMORY_LIMIT", "259m"])
+          ).to include({key:"MEMORY_LIMIT", value:"259m"})
         end
 
         it "contains app build artifact cache download uri" do
-          blobstore_url_generator.should_receive(:buildpack_cache_download_url).with(app).and_return("http://buildpack-cache-download.uri")
-          blobstore_url_generator.should_receive(:buildpack_cache_upload_url).with(app).and_return("http://buildpack-cache-upload.uri")
+          expect(blobstore_url_generator).to receive(:buildpack_cache_download_url).with(app).and_return(build_artifacts_cache_download_uri)
           staging_request = diego_stager_task.staging_request
-          expect(staging_request[:build_artifacts_cache_download_uri]).to eq("http://buildpack-cache-download.uri")
-          expect(staging_request[:build_artifacts_cache_upload_uri]).to eq("http://buildpack-cache-upload.uri")
+          expect(staging_request[:build_artifacts_cache_download_uri]).to eq(build_artifacts_cache_download_uri)
         end
 
         it "contains app bits download uri" do
-          blobstore_url_generator.should_receive(:app_package_download_url).with(app).and_return("http:/app-bits-download.uri")
-          expect(diego_stager_task.staging_request[:app_bits_download_uri]).to eq("http:/app-bits-download.uri")
+          expect(blobstore_url_generator).to receive(:app_package_download_url).with(app).and_return(app_package_download_url)
+          expect(diego_stager_task.staging_request[:app_bits_download_uri]).to eq(app_package_download_url)
         end
       end
     end

@@ -37,6 +37,10 @@ module VCAP::CloudController
         raise get_exception_from_errors(registration)
       end
 
+      if !registration.warnings.empty?
+        registration.warnings.each { |warning| add_warning(warning) }
+      end
+
       headers = {'Location' => url_of(broker)}
       body = ServiceBrokerPresenter.new(broker).to_json
       [HTTP::CREATED, headers, body]
@@ -55,6 +59,10 @@ module VCAP::CloudController
         raise get_exception_from_errors(registration)
       end
 
+      if !registration.warnings.empty?
+        registration.warnings.each { |warning| add_warning(warning) }
+      end
+
       body = ServiceBrokerPresenter.new(broker).to_json
       [HTTP::OK, {}, body]
     end
@@ -63,7 +71,7 @@ module VCAP::CloudController
     def delete(guid)
       broker = ServiceBroker.find(:guid => guid)
       return HTTP::NOT_FOUND unless broker
-      VCAP::Services::ServiceBrokers::ServiceBrokerRemoval.new(broker).execute!
+      VCAP::Services::ServiceBrokers::ServiceBrokerRemover.new(broker).execute!
       HTTP::NO_CONTENT
     rescue Sequel::ForeignKeyConstraintViolation
       raise VCAP::Errors::ApiError.new_from_details("ServiceBrokerNotRemovable")

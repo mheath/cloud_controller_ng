@@ -17,7 +17,7 @@ Sham.define do
   service_credentials { |index| { "creds-key-#{index}" => "creds-val-#{index}" } }
   binding_options     { |index| { "binding-options-#{index}" => "value-#{index}" } }
   uaa_id              { |index| "uaa-id-#{index}" }
-  domain              { |index| "domain-#{index}.com" }
+  domain              { |index| "domain-#{index}.example.com" }
   host                { |index| "host-#{index}" }
   guid                { |_| "guid-#{SecureRandom.uuid}" }
   extra               { |index| "extra-#{index}"}
@@ -269,7 +269,5 @@ module VCAP::CloudController
     org_guid { Sham.guid }
     space_guid { Sham.guid }
     space_name { Sham.name }
-    buildpack_guid { Sham.guid }
-    buildpack_name { Sham.name }
   end
 end

@@ -75,10 +75,8 @@ module VCAP::CloudController
        :file_descriptors => app.file_descriptors,
        :environment => environment,
        :stack => app.stack.name,
-       # All url generation should go to blobstore_url_generator
-       :app_bits_download_uri => @blobstore_url_generator.app_package_download_url(app),
        :build_artifacts_cache_download_uri => @blobstore_url_generator.buildpack_cache_download_url(@app),
-       :build_artifacts_cache_upload_uri => @blobstore_url_generator.buildpack_cache_upload_url(@app),
+       :app_bits_download_uri => @blobstore_url_generator.app_package_download_url(app),
        :buildpacks => buildpacks
       }
     end
@@ -87,12 +85,12 @@ module VCAP::CloudController
 
     def environment
       env = []
-      env << ["VCAP_APPLICATION", app.vcap_application.to_json]
-      env << ["VCAP_SERVICES", app.system_env_json["VCAP_SERVICES"].to_json]
+      env << {key:"VCAP_APPLICATION", value:app.vcap_application.to_json}
+      env << {key:"VCAP_SERVICES", value: app.system_env_json["VCAP_SERVICES"].to_json}
       db_uri = app.database_uri
-      env << ["DATABASE_URL", db_uri] if db_uri
-      env << ["MEMORY_LIMIT", "#{app.memory}m"]
-      app.environment_json.each { |k, v| env << [k, v] }
+      env << {key:"DATABASE_URL", value:db_uri} if db_uri
+      env << {key:"MEMORY_LIMIT", value:"#{app.memory}m"}
+      app.environment_json.each { |k, v| env << {key:k, value:v} }
       env
     end
 
@@ -107,12 +105,24 @@ module VCAP::CloudController
     end
 
     def buildpacks
+      buildpack = app.buildpack
+
+      if buildpack.instance_of?(GitBasedBuildpack)
+        buildpackIsHttp = buildpack.to_s =~ /^http/
+        buildPackIsNotGit =  !(buildpack.to_s =~ /\.git$/)
+        if buildpackIsHttp && buildPackIsNotGit
+          return [{key: "custom", url: buildpack.to_s}]
+        end
+      elsif buildpack.instance_of?(Buildpack)
+        return [admin_buildpack_entry(buildpack)]
+      end
+
       Buildpack.list_admin_buildpacks.
-          select(&:enabled).
-          collect { |buildpack| buildpack_entry(buildpack) }
+         select(&:enabled).
+         collect { |buildpack| admin_buildpack_entry(buildpack) }
     end
 
-    def buildpack_entry(buildpack)
+    def admin_buildpack_entry(buildpack)
       {
           key: buildpack.key,
           url: @blobstore_url_generator.admin_buildpack_download_url(buildpack)

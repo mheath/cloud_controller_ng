@@ -12,7 +12,8 @@ module VCAP::CloudController
         :droplet_hash => nil,
         :package_state => "PENDING",
         :state => "STARTED",
-        :instances => 1
+        :instances => 1,
+        :disk_quota => 1024
       )
     end
     let(:stager_id) { "my_stager" }
@@ -56,7 +57,7 @@ module VCAP::CloudController
       app.staged?.should be_false
 
       VCAP.stub(:secure_uuid) { "some_task_id" }
-      stager_pool.stub(:find_stager).with(app.stack.name, 1024).and_return(stager_id)
+      stager_pool.stub(:find_stager).with(app.stack.name, 1024, anything).and_return(stager_id)
 
       EM.stub(:add_timer)
       EM.stub(:defer).and_yield
@@ -80,11 +81,50 @@ module VCAP::CloudController
       end
     end
 
-    context 'when the app memory requirement exceeds the staging memory requirement (1024)' do
-      it 'should request a stager with the app memory requirement' do
-        app.memory = 1025
-        stager_pool.should_receive(:find_stager).with(app.stack.name, 1025).and_return(stager_id)
-        staging_task.stage
+    describe "staging memory requirements" do
+      context 'when the app memory requirement exceeds the staging memory requirement (1024)' do
+        it 'should request a stager with the app memory requirement' do
+          app.memory = 1025
+          stager_pool.should_receive(:find_stager).with(app.stack.name, 1025, anything).and_return(stager_id)
+          staging_task.stage
+        end
+      end
+
+      context 'when the app memory requirement is less than the staging memory requirement' do
+        it "requests the staging memory requirement" do
+          config_hash[:staging][:minimum_staging_memory_mb] = 2048
+          stager_pool.should_receive(:find_stager).with(app.stack.name, 2048, anything).and_return(stager_id)
+          staging_task.stage
+        end
+      end
+    end
+
+    describe "staging disk requirements" do
+      context 'when the app disk requirement is less than the staging disk requirement' do
+        it "should request a stager with enough disk" do
+          app.disk_quota = 12
+          config_hash[:staging][:minimum_staging_disk_mb] = 1025
+          stager_pool.should_receive(:find_stager).with(app.stack.name, anything, 1025).and_return(stager_id)
+          staging_task.stage
+        end
+      end
+
+      context 'when the app disk requirement is less than the default (4096) staging disk requirement, and it wasnt overridden' do
+        it "should request a stager with enough disk" do
+          app.disk_quota = 123
+          config_hash[:staging][:minimum_staging_disk_mb] = nil
+          stager_pool.should_receive(:find_stager).with(app.stack.name, anything, 4096).and_return(stager_id)
+          staging_task.stage
+        end
+      end
+
+      context 'when the app disk requirement exceeds the staging disk requirement' do
+        it "should request a stager with enough disk" do
+          app.disk_quota = 123
+          config_hash[:staging][:minimum_staging_disk_mb] = 122
+          stager_pool.should_receive(:find_stager).with(app.stack.name, anything, 123).and_return(stager_id)
+          staging_task.stage
+        end
       end
     end
 
@@ -238,9 +278,7 @@ module VCAP::CloudController
         end
 
         context "when app staging succeeds" do
-          let(:detected_buildpack) { "buildpack-name" }
-          let(:admin_buildpack) { Buildpack.make }
-          let(:buildpack_key) { admin_buildpack.key }
+          let(:detected_buildpack) { "buildpack detect output" }
 
           context "and the app was staged and started by the DEA" do
             context "when no other staging has happened" do
@@ -250,10 +288,6 @@ module VCAP::CloudController
 
               it "saves the detected buildpack" do
                 expect { stage }.to change { app.refresh.detected_buildpack }.from(nil)
-              end
-
-              it "saves the detected buildpack guid" do
-                expect { stage }.to change { app.refresh.detected_buildpack_guid }.from(nil)
               end
 
               it "does not clobber other attributes that changed between staging" do
@@ -270,7 +304,7 @@ module VCAP::CloudController
               end
 
               it "marks app started in dea pool" do
-                dea_pool.should_receive(:mark_app_started).with({ :dea_id => stager_id, :app_id => app.guid })
+                dea_pool.should_receive(:mark_app_started).with({:dea_id => stager_id, :app_id => app.guid})
                 stage
               end
 
@@ -294,8 +328,8 @@ module VCAP::CloudController
               expect {
                 stage
               }.to raise_error(
-                     Errors::ApiError,
-                     /another staging request was initiated/
+                       Errors::ApiError,
+                       /another staging request was initiated/
                    )
             end
 
@@ -397,6 +431,10 @@ module VCAP::CloudController
       end
 
       describe "reserve app memory" do
+        before do
+          stager_pool.stub(:find_stager).with(app.stack.name, 1025, 4096).and_return(stager_id)
+        end
+
         context "when app memory is less when configured minimum_staging_memory_mb" do
           before do
             config_hash[:staging][:minimum_staging_memory_mb] = 1025
